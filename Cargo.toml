@@ -1,0 +1,32 @@
+[package]
+name = "omgminecraft"
+version = "0.1.0"
+edition = "2021"
+description = "Mini panel d'hébergement Minecraft : instances, versions, mods, mondes"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+axum = { version = "0.8", features = ["multipart"] }
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
+tokio-stream = "0.1"
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream"] }
+rust-embed = "8"
+mime_guess = "2"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+flate2 = "1"
+tar = "0.4"
+sha1 = "0.10"
+hex = "0.4"
+ipnet = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1

@@ -1,0 +1,23 @@
+[Unit]
+Description=omgminecraft — panel des serveurs Minecraft
+After=network-online.target netbird.service
+Wants=network-online.target
+
+[Service]
+User=minecraft
+Group=minecraft
+Environment=OMG_DATA_DIR=/srv/minecraft
+Environment=OMG_LISTEN=0.0.0.0:8080
+# Environment=OMG_ALLOWED_CIDRS=100.64.0.0/10,127.0.0.0/8,::1/128
+# Environment=OMG_GAME_PORT=25565
+# Environment=OMG_DEFAULT_MEMORY_MB=6144
+ExecStart=/usr/local/bin/omgminecraft
+# SIGTERM au panel seul : c'est lui qui envoie `stop` au serveur Minecraft et
+# attend la sauvegarde. Java ne reçoit SIGKILL qu'au bout du délai.
+KillMode=mixed
+TimeoutStopSec=120
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+{
+  "name": "One Life",
+  "kind": "fabric",
+  "mc_version": "26.3",
+  "jar": "fabric-server-launch.jar",
+  "java_major": 25,
+  "memory_min_mb": 4096,
+  "memory_max_mb": 8192,
+  "jvm_args": ["-XX:+UseG1GC"],
+  "status": "ready"
+}
