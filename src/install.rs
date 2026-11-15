@@ -209,7 +209,42 @@ async fn do_install(app: &Arc<App>, inst: &Instance) -> Result<()> {
         Kind::Custom => bail!("une instance personnalisée ne s'installe pas"),
     }
     app.update_instance(&inst.id, |i| i.java_major = java).map_err(|e| anyhow!(e.1))?;
-    ensure_java(app, java).await?;
+    let java = ensure_java(app, java).await?;
+    init_settings(app, inst, &java).await?;
+    Ok(())
+}
+
+/// Fait écrire au serveur son `server.properties` complet (toutes les clés de
+/// la version, avec leurs valeurs par défaut) sans le démarrer : sinon le
+/// fichier n'existe qu'après un premier lancement.
+pub async fn init_settings(app: &App, inst: &Instance, java: &Path) -> Result<()> {
+    let dir = app.instance_dir(&inst.id);
+    app.server.log(format!("[omg] [{}] génération de server.properties", inst.id));
+    // Sans EULA acceptée, une version trop ancienne pour connaître
+    // `--initSettings` s'arrête d'elle-même au lieu de démarrer pour de bon.
+    let eula = dir.join("eula.txt");
+    let _ = tokio::fs::remove_file(&eula).await;
+    let mut cmd = tokio::process::Command::new(java);
+    cmd.current_dir(&dir)
+        .args(["-Xmx1024M", "-jar", &inst.jar, "--initSettings", "nogui"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true);
+    let res = tokio::time::timeout(std::time::Duration::from_secs(300), cmd.status()).await;
+    tokio::fs::write(&eula, "eula=true\n").await?;
+    match res {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => return Err(e).context("lancement de java"),
+        Err(_) => bail!("le serveur n'a pas généré sa configuration en 5 minutes"),
+    }
+    let path = dir.join("server.properties");
+    let mut props = crate::properties::Properties::load(&path)?;
+    if props.get("motd").is_none_or(|m| m == "A Minecraft Server") {
+        props.set("motd", &inst.name);
+    }
+    app.enforce_network(&mut props);
+    props.save(&path)?;
     Ok(())
 }
 

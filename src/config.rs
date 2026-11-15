@@ -15,6 +15,8 @@ pub struct Config {
     /// policy NetBird, une instance ne doit pas pouvoir en changer.
     pub game_port: u16,
     pub default_memory_mb: u32,
+    /// Adresse que les joueurs tapent, affichée dans le panel.
+    pub public_address: String,
 }
 
 impl Config {
@@ -34,6 +36,7 @@ impl Config {
             default_memory_mb: var("OMG_DEFAULT_MEMORY_MB", "6144")
                 .parse()
                 .context("OMG_DEFAULT_MEMORY_MB")?,
+            public_address: var("OMG_PUBLIC_ADDRESS", ""),
         })
     }
 }

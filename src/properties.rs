@@ -59,6 +59,10 @@ impl Properties {
         self.lines.push(Line::Kv(key.to_string(), value.to_string()));
     }
 
+    pub fn len(&self) -> usize {
+        self.lines.iter().filter(|l| matches!(l, Line::Kv(..))).count()
+    }
+
     #[allow(dead_code)]
     pub fn entries(&self) -> Vec<(String, String)> {
         self.lines

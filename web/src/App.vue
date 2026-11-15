@@ -11,6 +11,8 @@ import SettingsPanel from './components/SettingsPanel.vue';
 const status = ref<Status>({ state: 'stopped', instance: null, started_at: null, world: null, players: [], last_exit: null });
 const logs = ref<string[]>([]);
 const connected = ref(false);
+const address = ref('');
+const copied = ref(false);
 const instances = ref<Instance[]>([]);
 const selectedId = ref<string | null>(localStorage.getItem('omg.selected'));
 const tab = ref<'console' | 'files' | 'mods' | 'worlds' | 'settings'>('console');
@@ -87,9 +89,20 @@ function connect() {
   });
 }
 
+function copyAddress() {
+  navigator.clipboard?.writeText(address.value).then(() => {
+    copied.value = true;
+    setTimeout(() => (copied.value = false), 1500);
+  });
+}
+
 onMounted(() => {
   refresh();
   connect();
+  fetch('/api/status')
+    .then((r) => r.json())
+    .then((s) => (address.value = s.address ?? ''))
+    .catch(() => {});
   // Les installations se font en tâche de fond : on relit tant qu'il y en a une.
   poll = window.setInterval(() => {
     if (instances.value.some((i) => i.status === 'installing')) refresh();
@@ -130,6 +143,9 @@ const kindLabel = { vanilla: 'Vanilla', fabric: 'Fabric', custom: 'Perso' };
       </span>
       <span v-else-if="status.state === 'stopped' && status.last_exit" class="muted">· {{ status.last_exit }}</span>
     </div>
+    <button v-if="address" class="address" title="Adresse à taper dans Minecraft — cliquer pour copier" @click="copyAddress">
+      {{ copied ? 'Copié !' : address }}
+    </button>
     <div class="actions">
       <button v-if="runningId" :disabled="busy || status.state === 'stopping'" @click="act(api.restart)">Redémarrer</button>
       <button v-if="runningId" class="danger" :disabled="busy || status.state === 'stopping'" @click="act(api.stop)">Arrêter</button>

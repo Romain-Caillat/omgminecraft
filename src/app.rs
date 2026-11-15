@@ -123,12 +123,57 @@ impl App {
                 });
             }
         }
+        self.backfill_properties();
         let p = self.persisted();
         if let (true, Some(id)) = (p.running, p.active) {
             let app = self.clone();
             tokio::spawn(async move {
                 if let Err(e) = app.start_instance(&id).await {
                     app.server.log(format!("[omg] relance de « {id} » impossible : {}", e.1));
+                }
+            });
+        }
+    }
+
+    /// Toutes les instances partagent une seule adresse : le port est celui
+    /// qu'ouvre la policy NetBird, et le serveur écoute sur toutes les
+    /// interfaces (NetBird et LAN).
+    pub fn enforce_network(&self, props: &mut Properties) {
+        props.set("server-port", &self.cfg.game_port.to_string());
+        props.set("server-ip", "");
+    }
+
+    /// Instances créées avant que l'installation ne génère `server.properties` :
+    /// on le complète une fois, en tâche de fond.
+    fn backfill_properties(self: &Arc<Self>) {
+        let Ok(list) = self.list_instances() else { return };
+        let p = self.persisted();
+        for inst in list {
+            // Celle qui va être relancée génère son fichier en démarrant.
+            if p.running && p.active.as_deref() == Some(inst.id.as_str()) {
+                continue;
+            }
+            if inst.status != InstallStatus::Ready || inst.kind == crate::instances::Kind::Custom {
+                continue;
+            }
+            // `logs/` existe dès que Java a tourné une fois dans l'instance :
+            // une version trop ancienne pour `--initSettings` n'est tentée qu'une fois.
+            if self.instance_dir(&inst.id).join("logs").exists() {
+                continue;
+            }
+            let props = Properties::load(&self.instance_dir(&inst.id).join("server.properties"));
+            if props.map(|p| p.len() >= 10).unwrap_or(true) {
+                continue;
+            }
+            let app = self.clone();
+            tokio::spawn(async move {
+                let res = async {
+                    let java = install::ensure_java(&app, inst.java_major).await?;
+                    install::init_settings(&app, &inst, &java).await
+                }
+                .await;
+                if let Err(e) = res {
+                    app.server.log(format!("[omg] [{}] server.properties : {e:#}", inst.id));
                 }
             });
         }
@@ -157,10 +202,9 @@ impl App {
         }
         let java = install::ensure_java(self, inst.java_major).await?;
 
-        // Le port est celui qu'ouvre la policy NetBird : on l'impose.
         let props_path = dir.join("server.properties");
         let mut props = Properties::load(&props_path)?;
-        props.set("server-port", &self.cfg.game_port.to_string());
+        self.enforce_network(&mut props);
         props.save(&props_path)?;
         let world = props.get("level-name").filter(|w| !w.is_empty()).unwrap_or("world").to_string();
 

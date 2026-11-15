@@ -251,3 +251,6 @@ kbd { background: var(--panel-2); border: 1px solid var(--border); border-radius
   .tree { border-right: none; border-bottom: 1px solid var(--border); }
   .row-actions { display: flex; }
 }
+
+.address { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.85rem; background: var(--bg); color: var(--accent); }
+@media (max-width: 760px) { .address { order: 2; } }

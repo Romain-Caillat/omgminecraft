@@ -91,7 +91,11 @@ async fn guard(
 }
 
 async fn status(State(app): AppState) -> Json<Value> {
-    Json(json!({ "server": app.server.status(), "active": app.persisted().active }))
+    Json(json!({
+        "server": app.server.status(),
+        "active": app.persisted().active,
+        "address": app.cfg.public_address,
+    }))
 }
 
 /// Flux SSE : l'état du serveur (`status`) et chaque ligne de console (`log`).
@@ -223,7 +227,7 @@ async fn create(State(app): AppState, Json(req): Json<CreateReq>) -> ApiResult<J
     std::fs::create_dir_all(&dir)?;
     std::fs::write(dir.join("eula.txt"), "eula=true\n")?;
     let mut props = Properties::load(&dir.join("server.properties"))?;
-    props.set("server-port", &app.cfg.game_port.to_string());
+    app.enforce_network(&mut props);
     props.set("motd", name);
     props.save(&dir.join("server.properties"))?;
     let inst = Instance {

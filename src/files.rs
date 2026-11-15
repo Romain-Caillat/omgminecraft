@@ -312,6 +312,10 @@ fn extract_world(zip: &FsPath, dest: &FsPath) -> anyhow::Result<Option<String>> 
     std::fs::create_dir_all(dest)?;
     for i in 0..ar.len() {
         let mut f = ar.by_index(i)?;
+        // Les liens symboliques d'une archive ne sont jamais recréés.
+        if f.is_symlink() {
+            continue;
+        }
         let Some(p) = f.enclosed_name() else { continue };
         let Ok(rel) = p.strip_prefix(&root) else { continue };
         if rel.as_os_str().is_empty() {
