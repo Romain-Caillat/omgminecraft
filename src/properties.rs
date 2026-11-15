@@ -59,6 +59,7 @@ impl Properties {
         self.lines.push(Line::Kv(key.to_string(), value.to_string()));
     }
 
+    #[allow(dead_code)]
     pub fn entries(&self) -> Vec<(String, String)> {
         self.lines
             .iter()
@@ -70,6 +71,7 @@ impl Properties {
     }
 
     /// Remplace l'ensemble des clés : celles absentes de `entries` disparaissent.
+    #[allow(dead_code)]
     pub fn replace_all(&mut self, entries: &[(String, String)]) {
         self.lines.retain(|l| match l {
             Line::Kv(k, _) => entries.iter().any(|(ek, _)| ek == k),

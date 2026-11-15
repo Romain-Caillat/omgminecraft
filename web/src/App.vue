@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { api, stateLabel, type Instance, type Status } from './api';
 import NewInstance from './components/NewInstance.vue';
 import ConsolePanel from './components/ConsolePanel.vue';
-import PropertiesPanel from './components/PropertiesPanel.vue';
+import FilesPanel from './components/FilesPanel.vue';
 import ModsPanel from './components/ModsPanel.vue';
 import WorldsPanel from './components/WorldsPanel.vue';
 import SettingsPanel from './components/SettingsPanel.vue';
@@ -13,7 +13,8 @@ const logs = ref<string[]>([]);
 const connected = ref(false);
 const instances = ref<Instance[]>([]);
 const selectedId = ref<string | null>(localStorage.getItem('omg.selected'));
-const tab = ref<'console' | 'properties' | 'mods' | 'worlds' | 'settings'>('console');
+const tab = ref<'console' | 'files' | 'mods' | 'worlds' | 'settings'>('console');
+const files = ref<{ dirtyCount: number } | null>(null);
 const creating = ref(false);
 const busy = ref(false);
 const error = ref('');
@@ -25,6 +26,13 @@ const runningName = computed(() => instances.value.find((i) => i.id === runningI
 watch(selectedId, (id) => {
   if (id) localStorage.setItem('omg.selected', id);
 });
+
+/** Changer d'instance ferme l'éditeur : on prévient s'il reste du non-enregistré. */
+function select(id: string) {
+  if (id === selectedId.value) return;
+  if (files.value?.dirtyCount && !confirm('Des fichiers ne sont pas enregistrés. Changer d\'instance quand même ?')) return;
+  selectedId.value = id;
+}
 
 async function refresh() {
   try {
@@ -139,7 +147,7 @@ const kindLabel = { vanilla: 'Vanilla', fabric: 'Fabric', custom: 'Perso' };
           v-for="inst in instances"
           :key="inst.id"
           :class="{ active: inst.id === selectedId }"
-          @click="selectedId = inst.id"
+          @click="select(inst.id)"
         >
           <div class="name">
             <span v-if="inst.id === runningId" class="dot" :class="status.state"></span>
@@ -180,14 +188,21 @@ const kindLabel = { vanilla: 'Vanilla', fabric: 'Fabric', custom: 'Perso' };
 
       <nav class="tabs">
         <button :class="{ on: tab === 'console' }" @click="tab = 'console'">Console</button>
-        <button :class="{ on: tab === 'properties' }" @click="tab = 'properties'">Configuration</button>
+        <button :class="{ on: tab === 'files' }" @click="tab = 'files'">Fichiers</button>
         <button v-if="selected.kind !== 'vanilla'" :class="{ on: tab === 'mods' }" @click="tab = 'mods'">Mods</button>
         <button :class="{ on: tab === 'worlds' }" @click="tab = 'worlds'">Mondes</button>
         <button :class="{ on: tab === 'settings' }" @click="tab = 'settings'">Réglages</button>
       </nav>
 
+      <!-- Gardé monté : les onglets ouverts et le non-enregistré survivent aux changements d'onglet. -->
+      <FilesPanel
+        v-show="tab === 'files'"
+        ref="files"
+        :key="`f-${selected.id}`"
+        :instance="selected"
+        :running="selected.id === runningId"
+      />
       <ConsolePanel v-if="tab === 'console'" :logs="logs" :status="status" :selected="selected.id" />
-      <PropertiesPanel v-else-if="tab === 'properties'" :key="`p-${selected.id}`" :instance="selected" :running="selected.id === runningId" />
       <ModsPanel v-else-if="tab === 'mods'" :key="`m-${selected.id}`" :instance="selected" :running="selected.id === runningId" />
       <WorldsPanel
         v-else-if="tab === 'worlds'"
@@ -197,7 +212,7 @@ const kindLabel = { vanilla: 'Vanilla', fabric: 'Fabric', custom: 'Perso' };
         :live-world="selected.id === runningId ? status.world : null"
       />
       <SettingsPanel
-        v-else
+        v-else-if="tab === 'settings'"
         :key="`s-${selected.id}`"
         :instance="selected"
         :running="selected.id === runningId"

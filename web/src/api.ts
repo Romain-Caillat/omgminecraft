@@ -39,9 +39,11 @@ export interface World {
   name: string;
   size: number;
 }
-export interface Prop {
-  key: string;
-  value: string;
+export interface FsEntry {
+  name: string;
+  dir: boolean;
+  size: number;
+  mtime: number;
 }
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -101,8 +103,16 @@ export const api = {
   command: (command: string) => req<void>('POST', '/console', { command }),
   versions: (kind: Kind) => req<GameVersion[]>('GET', `/versions/${kind}`),
 
-  props: (id: string) => req<{ entries: Prop[]; managed: string[] }>('GET', `${i(id)}/properties`),
-  saveProps: (id: string, entries: Prop[]) => req<void>('PUT', `${i(id)}/properties`, entries),
+  ls: (id: string, path: string) => req<{ entries: FsEntry[] }>('GET', `${i(id)}/fs?path=${enc(path)}`),
+  readFile: (id: string, path: string) => req<{ content: string; mtime: number }>('GET', `${i(id)}/fs/content?path=${enc(path)}`),
+  writeFile: (id: string, path: string, content: string, mtime: number | null, create = false) =>
+    req<{ mtime: number }>('PUT', `${i(id)}/fs/content`, { path, content, mtime, create }),
+  mkdir: (id: string, path: string) => req<void>('POST', `${i(id)}/fs/mkdir`, { path }),
+  rename: (id: string, from: string, to: string) => req<void>('POST', `${i(id)}/fs/rename`, { from, to }),
+  rm: (id: string, path: string) => req<void>('DELETE', `${i(id)}/fs?path=${enc(path)}`),
+  uploadTo: (id: string, dir: string, form: FormData, p?: (n: number) => void) =>
+    upload(`${i(id)}/fs/upload?path=${enc(dir)}`, form, p),
+  downloadUrl: (id: string, path: string) => `/api${i(id)}/fs/download?path=${enc(path)}`,
 
   mods: (id: string) => req<{ mods: ModFile[] }>('GET', `${i(id)}/mods`),
   uploadMods: (id: string, form: FormData, p?: (n: number) => void) => upload(`${i(id)}/mods`, form, p),

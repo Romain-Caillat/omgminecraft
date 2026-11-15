@@ -10,7 +10,11 @@ sur une seule machine et passer de l'un à l'autre en un clic.
 - **Une seule instance tourne à la fois**, sur le port 25565 : « Basculer sur cette
   instance » arrête proprement la courante (`stop`, sauvegarde) et lance l'autre.
 - **Console** en direct (SSE), envoi de commandes, joueurs connectés.
-- **Configuration** : édition de `server.properties` (ordre et commentaires conservés).
+- **Fichiers** : explorateur + éditeur façon VS Code (CodeMirror, onglets, Ctrl+S,
+  coloration JSON/TOML/YAML/properties, erreurs JSON soulignées). Toute la config
+  passe par là : `server.properties`, `config/` des mods, `ops.json`, `instance.json`
+  (validé avant écriture)… Si le serveur a réécrit un fichier depuis son ouverture,
+  l'enregistrement est refusé au lieu d'écraser ses changements.
 - **Mods** (Fabric) : glisser-déposer de `.jar`, activer/désactiver, supprimer.
 - **Mondes** : plusieurs mondes par instance, choix du monde chargé, import d'une
   map en `.zip`, nouveau monde avec graine, téléchargement d'une sauvegarde

@@ -19,7 +19,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use crate::{
     app::App,
     error::{ApiResult, AppError},
-    files, install,
+    files, fs, install,
     instances::{now, InstallStatus, Instance, Kind},
     properties::Properties,
     web,
@@ -38,7 +38,15 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/instances", get(list).post(create))
         .route("/instances/{id}", get(get_one).patch(update).delete(remove))
         .route("/instances/{id}/start", post(start))
-        .route("/instances/{id}/properties", get(get_props).put(put_props))
+        .route("/instances/{id}/fs", get(fs::list).delete(fs::remove))
+        .route("/instances/{id}/fs/content", get(fs::read).put(fs::write))
+        .route("/instances/{id}/fs/mkdir", post(fs::mkdir))
+        .route("/instances/{id}/fs/rename", post(fs::rename))
+        .route("/instances/{id}/fs/download", get(fs::download))
+        .route(
+            "/instances/{id}/fs/upload",
+            post(fs::upload).layer(DefaultBodyLimit::disable()),
+        )
         .route(
             "/instances/{id}/mods",
             get(files::list_mods).post(files::upload_mods).layer(DefaultBodyLimit::disable()),
@@ -310,42 +318,5 @@ async fn remove(State(app): AppState, Path(id): Path<String>) -> ApiResult<Statu
 
 async fn start(State(app): AppState, Path(id): Path<String>) -> ApiResult<StatusCode> {
     app.start_instance(&id).await?;
-    Ok(StatusCode::NO_CONTENT)
-}
-
-async fn get_props(State(app): AppState, Path(id): Path<String>) -> ApiResult<Json<Value>> {
-    app.load_instance(&id)?;
-    let p = Properties::load(&app.instance_dir(&id).join("server.properties"))?;
-    let entries: Vec<Value> =
-        p.entries().into_iter().map(|(k, v)| json!({ "key": k, "value": v })).collect();
-    Ok(Json(json!({ "entries": entries, "managed": ["server-port"] })))
-}
-
-#[derive(Deserialize)]
-struct Entry {
-    key: String,
-    value: String,
-}
-
-async fn put_props(
-    State(app): AppState,
-    Path(id): Path<String>,
-    Json(entries): Json<Vec<Entry>>,
-) -> ApiResult<StatusCode> {
-    app.load_instance(&id)?;
-    let mut list = Vec::with_capacity(entries.len());
-    for e in entries {
-        let k = e.key.trim();
-        let bad_key = k.is_empty() || k.contains(['=', ':', '#', '!', ' ']);
-        if bad_key || k.chars().chain(e.value.chars()).any(char::is_control) {
-            return Err(AppError::bad(format!("propriété invalide : {k:?}")));
-        }
-        list.push((k.to_string(), e.value));
-    }
-    let path = app.instance_dir(&id).join("server.properties");
-    let mut p = Properties::load(&path)?;
-    p.replace_all(&list);
-    p.set("server-port", &app.cfg.game_port.to_string());
-    p.save(&path)?;
     Ok(StatusCode::NO_CONTENT)
 }

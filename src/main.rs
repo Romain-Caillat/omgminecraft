@@ -2,6 +2,7 @@ mod app;
 mod config;
 mod error;
 mod files;
+mod fs;
 mod install;
 mod instances;
 mod properties;
