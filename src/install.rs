@@ -243,7 +243,7 @@ pub async fn init_settings(app: &App, inst: &Instance, java: &Path) -> Result<()
     if props.get("motd").is_none_or(|m| m == "A Minecraft Server") {
         props.set("motd", &inst.name);
     }
-    app.enforce_network(&mut props);
+    app.enforce_props(&mut props);
     props.save(&path)?;
     Ok(())
 }

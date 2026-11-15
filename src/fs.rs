@@ -27,6 +27,9 @@ use crate::{
 
 type AppState = State<Arc<App>>;
 
+/// Listes d'accès de Minecraft : sans objet ici, c'est NetBird qui filtre.
+const HIDDEN: [&str; 3] = ["whitelist.json", "banned-players.json", "banned-ips.json"];
+
 /// Au-delà, l'éditeur refuse : le fichier se télécharge.
 const MAX_EDIT: u64 = 2 * 1024 * 1024;
 
@@ -110,7 +113,7 @@ pub async fn list(
     for e in rd.flatten() {
         let Some(name) = e.file_name().to_str().map(str::to_string) else { continue };
         let Ok(m) = e.metadata() else { continue };
-        if name.starts_with(".instance.json") {
+        if name.starts_with(".instance.json") || HIDDEN.contains(&name.as_str()) {
             continue;
         }
         entries.push(Entry { name, dir: m.is_dir(), size: m.len(), mtime: mtime(&m) });

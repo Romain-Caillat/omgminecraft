@@ -227,7 +227,7 @@ async fn create(State(app): AppState, Json(req): Json<CreateReq>) -> ApiResult<J
     std::fs::create_dir_all(&dir)?;
     std::fs::write(dir.join("eula.txt"), "eula=true\n")?;
     let mut props = Properties::load(&dir.join("server.properties"))?;
-    app.enforce_network(&mut props);
+    app.enforce_props(&mut props);
     props.set("motd", name);
     props.save(&dir.join("server.properties"))?;
     let inst = Instance {

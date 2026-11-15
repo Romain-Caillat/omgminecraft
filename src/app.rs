@@ -123,6 +123,7 @@ impl App {
                 });
             }
         }
+        self.enforce_all();
         self.backfill_properties();
         let p = self.persisted();
         if let (true, Some(id)) = (p.running, p.active) {
@@ -135,12 +136,32 @@ impl App {
         }
     }
 
-    /// Toutes les instances partagent une seule adresse : le port est celui
-    /// qu'ouvre la policy NetBird, et le serveur écoute sur toutes les
-    /// interfaces (NetBird et LAN).
-    pub fn enforce_network(&self, props: &mut Properties) {
+    /// Réglages qui ne dépendent pas de l'instance :
+    /// - une seule adresse pour toutes : le port est celui qu'ouvre la policy
+    ///   NetBird, et le serveur écoute sur toutes les interfaces ;
+    /// - pas de whitelist : qui peut jouer, c'est NetBird qui le décide.
+    pub fn enforce_props(&self, props: &mut Properties) {
         props.set("server-port", &self.cfg.game_port.to_string());
         props.set("server-ip", "");
+        props.set("white-list", "false");
+        props.set("enforce-whitelist", "false");
+    }
+
+    /// Applique `enforce_props` aux fichiers déjà présents, pour que l'éditeur
+    /// montre les vraies valeurs sans attendre un démarrage.
+    fn enforce_all(&self) {
+        let Ok(list) = self.list_instances() else { return };
+        for inst in list {
+            let path = self.instance_dir(&inst.id).join("server.properties");
+            let Ok(mut props) = Properties::load(&path) else { continue };
+            if props.len() == 0 {
+                continue;
+            }
+            self.enforce_props(&mut props);
+            if let Err(e) = props.save(&path) {
+                tracing::warn!("{}: {e}", path.display());
+            }
+        }
     }
 
     /// Instances créées avant que l'installation ne génère `server.properties` :
@@ -204,7 +225,7 @@ impl App {
 
         let props_path = dir.join("server.properties");
         let mut props = Properties::load(&props_path)?;
-        self.enforce_network(&mut props);
+        self.enforce_props(&mut props);
         props.save(&props_path)?;
         let world = props.get("level-name").filter(|w| !w.is_empty()).unwrap_or("world").to_string();
 

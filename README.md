@@ -7,6 +7,8 @@ sur une seule machine et passer de l'un à l'autre en un clic.
   Mojang (snapshots et anciennes versions compris). Le jar serveur est téléchargé
   et vérifié (SHA-1), et la **bonne version de Java** est installée automatiquement
   (Temurin, via Adoptium) : Java 8 pour une 1.12, 17 pour une 1.20.1, 21, 25…
+- **Pas de whitelist** : `white-list` et `enforce-whitelist` sont forcés à `false`
+  et les fichiers de listes sont masqués — qui peut jouer, c'est NetBird.
 - **Une seule instance tourne à la fois**, sur le port 25565 : « Basculer sur cette
   instance » arrête proprement la courante (`stop`, sauvegarde) et lance l'autre.
 - **Console** en direct (SSE), envoi de commandes, joueurs connectés.
