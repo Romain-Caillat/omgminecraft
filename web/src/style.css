@@ -275,3 +275,4 @@ button.link { background: none; border: none; color: var(--accent); padding: 0 0
 .warn-card { border-color: var(--warn); }
 .missing { margin: 0.4rem 0 0.8rem; padding-left: 1.2rem; }
 .badge { background: var(--warn); color: #111; border-radius: 9px; font-size: 0.72rem; padding: 0 6px; margin-left: 0.35rem; }
+.banner.stale { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }

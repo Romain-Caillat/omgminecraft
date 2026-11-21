@@ -9,6 +9,14 @@ use rust_embed::RustEmbed;
 #[folder = "web/dist"]
 struct Assets;
 
+/// Empreinte de l'interface embarquée : change à chaque build du front, ce qui
+/// permet à un onglet ouvert de savoir qu'il est périmé.
+pub fn build_id() -> String {
+    Assets::get("index.html")
+        .map(|f| hex::encode(&f.metadata.sha256_hash()[..6]))
+        .unwrap_or_default()
+}
+
 pub async fn static_handler(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
     let (path, file) = match Assets::get(path).filter(|_| !path.is_empty()) {

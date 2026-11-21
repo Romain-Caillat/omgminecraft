@@ -114,6 +114,7 @@ async fn status(State(app): AppState) -> Json<Value> {
         "server": app.server.status(),
         "active": app.persisted().active,
         "address": app.cfg.public_address,
+        "build": web::build_id(),
     }))
 }
 

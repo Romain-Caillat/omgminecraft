@@ -25,6 +25,9 @@ const files = ref<{ dirtyCount: number } | null>(null);
 const creating = ref(false);
 const busy = ref(false);
 const error = ref('');
+/** Interface chargée par cet onglet, et celle que sert le panel. */
+const build = ref('');
+const stale = ref(false);
 
 const selected = computed(() => instances.value.find((i) => i.id === selectedId.value) ?? null);
 const runningId = computed(() => (status.value.state === 'stopped' ? null : status.value.instance));
@@ -86,7 +89,19 @@ let poll: number | undefined;
 
 function connect() {
   es = new EventSource('/api/events');
-  es.onopen = () => (connected.value = true);
+  // Le flux se rouvre après chaque redémarrage du panel : c'est le moment de
+  // vérifier si l'interface a changé (déploiement) depuis le chargement.
+  es.onopen = () => {
+    connected.value = true;
+    fetch('/api/status')
+      .then((r) => r.json())
+      .then((s) => {
+        if (!s.build) return;
+        if (!build.value) build.value = s.build;
+        else if (s.build !== build.value) stale.value = true;
+      })
+      .catch(() => {});
+  };
   es.onerror = () => (connected.value = false);
   es.addEventListener('history', () => (logs.value = []));
   es.addEventListener('log', (e) => {
@@ -96,6 +111,11 @@ function connect() {
   es.addEventListener('status', (e) => {
     status.value = JSON.parse((e as MessageEvent).data);
   });
+}
+
+function reload() {
+  if (files.value?.dirtyCount && !confirm('Des fichiers ne sont pas enregistrés. Recharger quand même ?')) return;
+  location.reload();
 }
 
 function copyAddress() {
@@ -165,6 +185,10 @@ watch(modded, (m) => {
     </div>
   </header>
 
+  <div v-if="stale" class="banner info stale">
+    Le panel a été mis à jour : rechargez la page pour utiliser la nouvelle version.
+    <button class="primary" @click="reload">Recharger</button>
+  </div>
   <div v-if="error" class="banner error" @click="error = ''">{{ error }}</div>
 
   <div class="layout">
