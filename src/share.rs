@@ -264,6 +264,8 @@ fn share_url(app: &App, token: &str) -> String {
 }
 
 pub async fn status(State(app): AppState, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    app.load_instance(&id)?;
+    app.reconcile_missing(&id);
     let inst = app.load_instance(&id)?;
     let root = client_dir(&app, &id);
     let exists = root.is_dir();

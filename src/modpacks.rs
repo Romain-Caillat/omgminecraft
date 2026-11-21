@@ -1205,6 +1205,45 @@ pub async fn upload(State(app): AppState, mut mp: Multipart) -> ApiResult<Json<I
     Ok(Json(create_from_pack(&app, path, &name, max, info).await?))
 }
 
+impl App {
+    /// Fichiers manquants arrivés par un autre chemin (onglet Mods, Fichiers…) :
+    /// on les pose aussi de l'autre côté (lien physique) et on les retire de la
+    /// liste. Renvoie les noms réglés.
+    pub fn reconcile_missing(&self, id: &str) -> Vec<String> {
+        let Ok(inst) = self.load_instance(id) else { return vec![] };
+        let Some(pack) = inst.modpack else { return vec![] };
+        let dir = self.instance_dir(id);
+        let mut done = vec![];
+        for m in &pack.missing {
+            let mut targets = vec![];
+            if m.server {
+                targets.push(dir.join(&m.dir).join(&m.file_name));
+            }
+            if m.client {
+                targets.push(dir.join("client").join(&m.dir).join(&m.file_name));
+            }
+            let Some(src) = targets.iter().find(|t| t.is_file()).cloned() else { continue };
+            let ok = targets.iter().all(|t| {
+                t.is_file()
+                    || t.parent().map(|p| std::fs::create_dir_all(p).is_ok()).unwrap_or(false)
+                        && (std::fs::hard_link(&src, t).is_ok() || std::fs::copy(&src, t).is_ok())
+            });
+            if ok {
+                done.push(m.file_name.clone());
+            }
+        }
+        if !done.is_empty() {
+            let _ = self.update_instance(id, |i| {
+                if let Some(mp) = &mut i.modpack {
+                    mp.missing.retain(|m| !done.contains(&m.file_name));
+                }
+            });
+            self.server.log(format!("[omg] [{id}] fichiers du modpack reconnus : {}", done.join(", ")));
+        }
+        done
+    }
+}
+
 /// Fichiers manquants (interdits au téléchargement automatique) ajoutés à la
 /// main : chacun est reconnu par son nom et posé côté serveur et/ou client.
 pub async fn upload_missing(

@@ -55,6 +55,10 @@ function disable() {
   run(() => api.shareDisable(props.instance.id).then(() => emit('changed')));
 }
 
+function onDrop(e: DragEvent) {
+  uploadMissing(e.dataTransfer?.files ?? null);
+}
+
 async function uploadMissing(files: FileList | null) {
   if (!files?.length) return;
   const form = new FormData();
@@ -94,9 +98,9 @@ async function uploadMissing(files: FileList | null) {
         </li>
       </ul>
       <input ref="input" type="file" multiple hidden @change="uploadMissing(($event.target as HTMLInputElement).files)" />
-      <button class="primary" :disabled="busy" @click="input?.click()">
-        {{ progress === null ? 'Envoyer les fichiers' : `Envoi… ${progress} %` }}
-      </button>
+      <div class="dropzone" @dragover.prevent @drop.prevent="onDrop" @click="!busy && input?.click()">
+        {{ progress === null ? 'Glissez les fichiers ici, ou cliquez pour les choisir' : `Envoi… ${progress} %` }}
+      </div>
     </div>
 
     <div class="card">

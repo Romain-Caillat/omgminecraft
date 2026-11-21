@@ -125,6 +125,20 @@ function copyAddress() {
   });
 }
 
+// Un fichier lâché à côté d'une zone de dépôt ne doit pas faire ouvrir ou
+// télécharger le fichier par le navigateur (et quitter le panel).
+function swallowDrop(e: DragEvent) {
+  if (!(e.target as HTMLElement | null)?.closest?.('.dropzone')) e.preventDefault();
+}
+onMounted(() => {
+  window.addEventListener('dragover', swallowDrop);
+  window.addEventListener('drop', swallowDrop);
+});
+onUnmounted(() => {
+  window.removeEventListener('dragover', swallowDrop);
+  window.removeEventListener('drop', swallowDrop);
+});
+
 onMounted(() => {
   refresh();
   connect();

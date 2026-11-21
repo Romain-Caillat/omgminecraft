@@ -98,6 +98,8 @@ pub async fn upload_mods(
         added.push(name);
     }
     app.server.log(format!("[omg] [{id}] mods ajoutés : {}", added.join(", ")));
+    // Un fichier attendu par le modpack va aussi dans le pack client.
+    app.reconcile_missing(&id);
     Ok(Json(json!({ "added": added })))
 }
 
