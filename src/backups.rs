@@ -92,6 +92,24 @@ pub struct BackupState {
     pub last_run_day: Option<String>,
 }
 
+/// Sauvegardes à supprimer pour que `list` (de la plus récente à la plus
+/// ancienne) tienne dans `max` octets : les plus anciennes d'abord, les
+/// manuelles en dernier recours, jamais la plus récente.
+fn quota_victims(list: &[Backup], max: u64) -> Vec<String> {
+    let mut total: u64 = list.iter().map(|b| b.size).sum();
+    let mut victims = vec![];
+    for manual in [false, true] {
+        for b in list.iter().skip(1).rev().filter(|b| (b.kind == BackupKind::Manuel) == manual) {
+            if total <= max {
+                return victims;
+            }
+            total -= b.size;
+            victims.push(b.file.clone());
+        }
+    }
+    victims
+}
+
 fn mtime_secs(m: &std::fs::Metadata) -> u64 {
     m.modified()
         .ok()
@@ -303,6 +321,7 @@ impl App {
         if !players_online {
             self.mark_activity(id, false);
         }
+        self.enforce_quota(id);
         let m = tokio::fs::metadata(&out).await?;
         let b = Backup { file: name, kind, size: m.len(), created_at: mtime_secs(&m) };
         self.server.log(format!(
@@ -396,6 +415,17 @@ impl App {
         Ok(())
     }
 
+    /// Plafond de place par instance (`backup_max_bytes`).
+    fn enforce_quota(&self, id: &str) {
+        let list = self.list_backups(id);
+        for file in quota_victims(&list, self.cfg.backup_max_bytes) {
+            match std::fs::remove_file(self.instance_backup_dir(id).join(&file)) {
+                Ok(()) => self.server.log(format!("[omg] [{id}] place limitée, sauvegarde supprimée : {file}")),
+                Err(e) => tracing::warn!("{id}/{file} : {e}"),
+            }
+        }
+    }
+
     /// Supprime les sauvegardes expirées ; garde toujours l'auto la plus récente.
     fn prune_backups(&self) {
         let limit = crate::instances::now().saturating_sub(self.cfg.backup_retention_days * 86_400);
@@ -411,6 +441,7 @@ impl App {
                     Err(e) => tracing::warn!("{id}/{} : {e}", b.file),
                 }
             }
+            self.enforce_quota(&id);
         }
     }
 
@@ -517,6 +548,7 @@ pub async fn list_all(State(app): AppState) -> ApiResult<Json<Value>> {
     Ok(Json(json!({
         "hour": app.cfg.backup_hour,
         "retention_days": app.cfg.backup_retention_days,
+        "max_bytes": app.cfg.backup_max_bytes,
         "groups": groups,
     })))
 }
@@ -579,6 +611,25 @@ mod tests {
         assert!(check_file("../x-auto.tar.gz").is_err());
         assert!(check_file(".a-auto.tar.gz").is_err());
         assert!(check_file("a-auto.tar.gz").is_ok());
+    }
+
+    #[test]
+    fn quota_keeps_newest_and_manual_last() {
+        let b = |file: &str, kind, size| Backup { file: file.into(), kind, size, created_at: 0 };
+        // De la plus récente à la plus ancienne.
+        let list = vec![
+            b("5", BackupKind::Manuel, 10),
+            b("4", BackupKind::Auto, 10),
+            b("3", BackupKind::Manuel, 10),
+            b("2", BackupKind::AvantRestauration, 10),
+            b("1", BackupKind::Auto, 10),
+        ];
+        assert!(quota_victims(&list, 50).is_empty());
+        assert_eq!(quota_victims(&list, 35), vec!["1", "2"]);
+        assert_eq!(quota_victims(&list, 20), vec!["1", "2", "4"]);
+        assert_eq!(quota_victims(&list, 5), vec!["1", "2", "4", "3"]);
+        // Une seule sauvegarde plus grosse que le plafond : on la garde.
+        assert!(quota_victims(&[b("x", BackupKind::Auto, 99)], 5).is_empty());
     }
 
     #[test]

@@ -24,6 +24,8 @@ pub struct Config {
     pub backup_hour: u32,
     /// Durée de conservation des sauvegardes automatiques.
     pub backup_retention_days: u64,
+    /// Place maximale des sauvegardes d'une instance.
+    pub backup_max_bytes: u64,
 }
 
 impl Config {
@@ -43,6 +45,11 @@ impl Config {
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| data_dir.join("backups")),
             backup_hour,
+            backup_max_bytes: {
+                let gb: f64 = var("OMG_BACKUP_MAX_GB", "3").parse().context("OMG_BACKUP_MAX_GB")?;
+                anyhow::ensure!(gb > 0.0, "OMG_BACKUP_MAX_GB doit être positif");
+                (gb * 1024.0 * 1024.0 * 1024.0) as u64
+            },
             backup_retention_days: var("OMG_BACKUP_RETENTION_DAYS", "14")
                 .parse()
                 .context("OMG_BACKUP_RETENTION_DAYS")?,

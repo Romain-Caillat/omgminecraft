@@ -12,6 +12,7 @@ const msg = ref('');
 
 const group = computed(() => overview.value?.groups.find((g) => g.instance === props.instanceId) ?? null);
 const backups = computed(() => group.value?.backups ?? []);
+const used = computed(() => backups.value.reduce((n, b) => n + b.size, 0));
 
 const kindLabel: Record<BackupKind, string> = {
   auto: 'auto',
@@ -77,7 +78,8 @@ function fmtDate(s: number) {
     <p v-if="overview" class="muted small">
       Sauvegarde automatique chaque jour à {{ overview.hour }} h, <strong>seulement si quelqu'un a joué</strong> depuis la
       précédente. Les automatiques sont gardées {{ overview.retention_days }} jours (la plus récente toujours), les
-      manuelles jusqu'à ce que vous les supprimiez.
+      manuelles jusqu'à ce que vous les supprimiez. Au-delà de {{ fmtSize(overview.max_bytes) }} par instance, les plus
+      anciennes sont supprimées (les manuelles en dernier, jamais la plus récente).
       <template v-if="exists">
         <br />
         {{ group?.activity ? 'Des joueurs se sont connectés depuis la dernière sauvegarde : la prochaine aura lieu.' : 'Aucune connexion depuis la dernière sauvegarde.' }}
@@ -92,6 +94,10 @@ function fmtDate(s: number) {
       </button>
       <span v-if="running" class="muted small">Le serveur tourne : l'écriture du monde est suspendue le temps de la copie.</span>
     </div>
+
+    <p v-if="overview && backups.length" class="small" :class="used > overview.max_bytes * 0.9 ? 'err' : 'muted'">
+      Place utilisée : {{ fmtSize(used) }} / {{ fmtSize(overview.max_bytes) }}
+    </p>
 
     <table class="list">
       <tbody>

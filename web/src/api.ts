@@ -63,6 +63,7 @@ export interface BackupGroup {
 export interface BackupOverview {
   hour: number;
   retention_days: number;
+  max_bytes: number;
   groups: BackupGroup[];
 }
 

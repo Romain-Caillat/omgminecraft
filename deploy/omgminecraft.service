@@ -11,6 +11,7 @@ Environment=OMG_DATA_DIR=/srv/minecraft
 Environment=OMG_BACKUP_DIR=/srv/backups
 # Environment=OMG_BACKUP_HOUR=4
 # Environment=OMG_BACKUP_RETENTION_DAYS=14
+# Environment=OMG_BACKUP_MAX_GB=3
 Environment=OMG_LISTEN=0.0.0.0:8080
 Environment=OMG_PUBLIC_ADDRESS=mc.secretofarasgrasa.com
 # Environment=OMG_ALLOWED_CIDRS=100.64.0.0/10,127.0.0.0/8,::1/128

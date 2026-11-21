@@ -66,6 +66,7 @@ Le groupe `admin` atteint déjà tous les ports de `srv-minecraft`. Adresse :
 | `OMG_BACKUP_DIR` | `$OMG_DATA_DIR/backups` | Sauvegardes — à monter **à part** des données |
 | `OMG_BACKUP_HOUR` | `4` | Heure locale de la sauvegarde automatique |
 | `OMG_BACKUP_RETENTION_DAYS` | `14` | Conservation des sauvegardes automatiques |
+| `OMG_BACKUP_MAX_GB` | `3` | Place maximale des sauvegardes d'une instance |
 
 Arborescence :
 
@@ -102,6 +103,11 @@ l'instance entière (`instance.json`, jar, réglages, mods, mondes), sauf
 - **manuel** : gardées jusqu'à suppression.
 - **avant-restauration** : prise automatiquement avant chaque restauration,
   même durée de vie que les auto.
+
+Au-delà de `OMG_BACKUP_MAX_GB` (3 Go) par instance, les sauvegardes les plus
+anciennes sont supprimées après chaque nouvelle : auto et avant-restauration
+d'abord, manuelles en dernier recours, jamais la plus récente. Ce plafond
+l'emporte sur la durée de conservation.
 
 Si le serveur tourne, la copie se fait entre `save-off` / `save-all flush` et
 `save-on` : l'état est cohérent et les joueurs ne sont pas déconnectés. Une
