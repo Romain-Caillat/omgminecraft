@@ -18,6 +18,7 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use crate::{
     app::App,
+    backups,
     error::{ApiResult, AppError},
     files, fs, install,
     instances::{now, InstallStatus, Instance, Kind},
@@ -38,6 +39,11 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/instances", get(list).post(create))
         .route("/instances/{id}", get(get_one).patch(update).delete(remove))
         .route("/instances/{id}/start", post(start))
+        .route("/instances/{id}/backups", post(backups::create))
+        .route("/backups", get(backups::list_all))
+        .route("/backups/{id}/{file}", delete(backups::remove))
+        .route("/backups/{id}/{file}/restore", post(backups::restore))
+        .route("/backups/{id}/{file}/download", get(backups::download))
         .route("/instances/{id}/fs", get(fs::list).delete(fs::remove))
         .route("/instances/{id}/fs/content", get(fs::read).put(fs::write))
         .route("/instances/{id}/fs/mkdir", post(fs::mkdir))

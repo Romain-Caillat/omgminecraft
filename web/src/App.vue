@@ -7,6 +7,7 @@ import FilesPanel from './components/FilesPanel.vue';
 import ModsPanel from './components/ModsPanel.vue';
 import WorldsPanel from './components/WorldsPanel.vue';
 import SettingsPanel from './components/SettingsPanel.vue';
+import BackupsPanel from './components/BackupsPanel.vue';
 
 const status = ref<Status>({ state: 'stopped', instance: null, started_at: null, world: null, players: [], last_exit: null });
 const logs = ref<string[]>([]);
@@ -15,7 +16,10 @@ const address = ref('');
 const copied = ref(false);
 const instances = ref<Instance[]>([]);
 const selectedId = ref<string | null>(localStorage.getItem('omg.selected'));
-const tab = ref<'console' | 'files' | 'mods' | 'worlds' | 'settings'>('console');
+const tab = ref<'console' | 'files' | 'mods' | 'worlds' | 'backups' | 'settings'>('console');
+/** Instances supprimées dont il reste des sauvegardes. */
+const orphans = ref<string[]>([]);
+const orphan = ref<string | null>(null);
 const files = ref<{ dirtyCount: number } | null>(null);
 const creating = ref(false);
 const busy = ref(false);
@@ -31,6 +35,7 @@ watch(selectedId, (id) => {
 
 /** Changer d'instance ferme l'éditeur : on prévient s'il reste du non-enregistré. */
 function select(id: string) {
+  orphan.value = null;
   if (id === selectedId.value) return;
   if (files.value?.dirtyCount && !confirm('Des fichiers ne sont pas enregistrés. Changer d\'instance quand même ?')) return;
   selectedId.value = id;
@@ -40,6 +45,9 @@ async function refresh() {
   try {
     instances.value = await api.instances();
     if (!selected.value && instances.value.length) selectedId.value = instances.value[0]!.id;
+    const b = await api.backups();
+    orphans.value = b.groups.filter((g) => !g.exists && g.backups.length).map((g) => g.instance);
+    if (orphan.value && !orphans.value.includes(orphan.value)) orphan.value = null;
   } catch (e) {
     error.value = (e as Error).message;
   }
@@ -178,9 +186,27 @@ const kindLabel = { vanilla: 'Vanilla', fabric: 'Fabric', custom: 'Perso' };
         </li>
         <li v-if="!instances.length" class="empty">Aucune instance pour l'instant.</li>
       </ul>
+      <template v-if="orphans.length">
+        <p class="muted small sidebar-title">Supprimées, avec sauvegardes</p>
+        <ul class="instances">
+          <li v-for="o in orphans" :key="o" :class="{ active: o === orphan }" @click="orphan = o">
+            <div class="name">{{ o }}</div>
+            <div class="meta">restaurable</div>
+          </li>
+        </ul>
+      </template>
     </aside>
 
-    <main v-if="selected" class="main">
+    <main v-if="orphan" class="main">
+      <div class="instance-head">
+        <div>
+          <h1>{{ orphan }}</h1>
+          <p class="muted">Instance supprimée — ses sauvegardes permettent de la recréer.</p>
+        </div>
+      </div>
+      <BackupsPanel :key="`o-${orphan}`" :instance-id="orphan" :exists="false" :running="false" @restored="selectedId = orphan; orphan = null; refresh()" />
+    </main>
+    <main v-else-if="selected" class="main">
       <div class="instance-head">
         <div>
           <h1>{{ selected.name }}</h1>
@@ -207,6 +233,7 @@ const kindLabel = { vanilla: 'Vanilla', fabric: 'Fabric', custom: 'Perso' };
         <button :class="{ on: tab === 'files' }" @click="tab = 'files'">Fichiers</button>
         <button v-if="selected.kind !== 'vanilla'" :class="{ on: tab === 'mods' }" @click="tab = 'mods'">Mods</button>
         <button :class="{ on: tab === 'worlds' }" @click="tab = 'worlds'">Mondes</button>
+        <button :class="{ on: tab === 'backups' }" @click="tab = 'backups'">Sauvegardes</button>
         <button :class="{ on: tab === 'settings' }" @click="tab = 'settings'">Réglages</button>
       </nav>
 
@@ -226,6 +253,14 @@ const kindLabel = { vanilla: 'Vanilla', fabric: 'Fabric', custom: 'Perso' };
         :instance="selected"
         :running="selected.id === runningId"
         :live-world="selected.id === runningId ? status.world : null"
+      />
+      <BackupsPanel
+        v-else-if="tab === 'backups'"
+        :key="`b-${selected.id}`"
+        :instance-id="selected.id"
+        :exists="true"
+        :running="selected.id === runningId"
+        @restored="refresh"
       />
       <SettingsPanel
         v-else-if="tab === 'settings'"

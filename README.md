@@ -63,6 +63,9 @@ Le groupe `admin` atteint déjà tous les ports de `srv-minecraft`. Adresse :
 | `OMG_ALLOWED_CIDRS` | `100.64.0.0/10,127.0.0.0/8,::1/128` | Réseaux autorisés |
 | `OMG_GAME_PORT` | `25565` | Port imposé à chaque instance (`server-port`) |
 | `OMG_DEFAULT_MEMORY_MB` | `6144` | Mémoire max proposée à la création |
+| `OMG_BACKUP_DIR` | `$OMG_DATA_DIR/backups` | Sauvegardes — à monter **à part** des données |
+| `OMG_BACKUP_HOUR` | `4` | Heure locale de la sauvegarde automatique |
+| `OMG_BACKUP_RETENTION_DAYS` | `14` | Conservation des sauvegardes automatiques |
 
 Arborescence :
 
@@ -83,6 +86,30 @@ serveurs, mondes et JRE y sont. Il est ignoré par git et par Docker, mais un
 `git clean -fdx`, un `rm -rf` du clone ou un re-clone **efface tous les mondes** :
 ne jamais faire ça ici. Les snapshots ZFS quotidiens de `media_disk/docker`
 (`/mnt/storage/.zfs/snapshot/`) sont la seule sauvegarde.
+
+## Sauvegardes
+
+Onglet **Sauvegardes** de chaque instance : sauvegarder maintenant, restaurer,
+télécharger, supprimer. Une archive `<instance>/<date>-<type>.tar.gz` contient
+l'instance entière (`instance.json`, jar, réglages, mods, mondes), sauf
+`libraries/`, `versions/`, `.fabric/` et `logs/` que le serveur régénère.
+
+- **auto** : chaque jour à `OMG_BACKUP_HOUR`, ou au premier passage après si le
+  panel était éteint, **seulement pour les instances où un joueur s'est connecté
+  depuis la sauvegarde précédente** (suivi dans `state.json`). Gardées
+  `OMG_BACKUP_RETENTION_DAYS` jours ; la plus récente de chaque instance n'est
+  jamais supprimée, même vieille.
+- **manuel** : gardées jusqu'à suppression.
+- **avant-restauration** : prise automatiquement avant chaque restauration,
+  même durée de vie que les auto.
+
+Si le serveur tourne, la copie se fait entre `save-off` / `save-all flush` et
+`save-on` : l'état est cohérent et les joueurs ne sont pas déconnectés. Une
+restauration exige l'instance arrêtée. Les sauvegardes d'une instance
+supprimée restent, et la barre latérale permet de la recréer.
+
+Sur PCT 107, elles vivent dans `/mnt/storage/omgminecraft/backups`, monté par
+`mp1` sur `/srv/backups` : un effacement de `data/` ne les emporte pas.
 
 Un Java système `/usr/lib/jvm/temurin-<major>-{jre,jdk}-<arch>` est utilisé en
 priorité ; sinon le JRE est téléchargé dans `java/<major>/`.

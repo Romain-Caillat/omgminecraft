@@ -38,8 +38,11 @@ pub struct App {
     pub server: Arc<Server>,
     pub shutdown: CancellationToken,
     pub java_lock: tokio::sync::Mutex<()>,
-    /// Sérialise démarrages et arrêts.
-    op: tokio::sync::Mutex<()>,
+    /// Sérialise démarrages, arrêts et restaurations.
+    pub(crate) op: tokio::sync::Mutex<()>,
+    /// Une sauvegarde à la fois.
+    pub(crate) backup_lock: tokio::sync::Mutex<()>,
+    pub(crate) backup_state: Mutex<crate::backups::BackupState>,
     persisted: Mutex<Persisted>,
     tmp_counter: AtomicU64,
 }
@@ -54,6 +57,9 @@ impl App {
         for e in std::fs::read_dir(cfg.data_dir.join("tmp"))?.flatten() {
             let _ = std::fs::remove_file(e.path()).or_else(|_| std::fs::remove_dir_all(e.path()));
         }
+        std::fs::create_dir_all(&cfg.backup_dir)
+            .with_context(|| format!("création de {}", cfg.backup_dir.display()))?;
+        let backup_state = App::load_backup_state(&cfg.backup_dir);
         let persisted = std::fs::read(cfg.data_dir.join("omg.json"))
             .ok()
             .and_then(|r| serde_json::from_slice(&r).ok())
@@ -69,6 +75,8 @@ impl App {
             shutdown: CancellationToken::new(),
             java_lock: Default::default(),
             op: Default::default(),
+            backup_lock: Default::default(),
+            backup_state: Mutex::new(backup_state),
             persisted: Mutex::new(persisted),
             tmp_counter: AtomicU64::new(0),
         }))
@@ -125,6 +133,7 @@ impl App {
         }
         self.enforce_all();
         self.backfill_properties();
+        self.spawn_backups();
         let p = self.persisted();
         if let (true, Some(id)) = (p.running, p.active) {
             let app = self.clone();

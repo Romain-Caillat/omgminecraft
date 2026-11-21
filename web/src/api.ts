@@ -46,6 +46,26 @@ export interface FsEntry {
   mtime: number;
 }
 
+export type BackupKind = 'auto' | 'manuel' | 'avant-restauration';
+export interface Backup {
+  file: string;
+  kind: BackupKind;
+  size: number;
+  created_at: number;
+}
+export interface BackupGroup {
+  instance: string;
+  exists: boolean;
+  /** Un joueur s'est connecté depuis la dernière sauvegarde. */
+  activity: boolean;
+  backups: Backup[];
+}
+export interface BackupOverview {
+  hour: number;
+  retention_days: number;
+  groups: BackupGroup[];
+}
+
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`/api${path}`, {
     method,
@@ -125,6 +145,11 @@ export const api = {
   deleteWorld: (id: string, name: string) => req<void>('DELETE', `${i(id)}/worlds/${enc(name)}`),
   uploadWorld: (id: string, form: FormData, p?: (n: number) => void) =>
     upload<{ name: string }>(`${i(id)}/worlds/upload`, form, p),
+  backups: () => req<BackupOverview>('GET', '/backups'),
+  backupNow: (id: string) => req<Backup>('POST', `${i(id)}/backups`),
+  restoreBackup: (id: string, file: string) => req<void>('POST', `/backups/${enc(id)}/${enc(file)}/restore`),
+  deleteBackup: (id: string, file: string) => req<void>('DELETE', `/backups/${enc(id)}/${enc(file)}`),
+  backupDownloadUrl: (id: string, file: string) => `/api/backups/${enc(id)}/${enc(file)}/download`,
   worldDownloadUrl: (id: string, name: string) => `/api${i(id)}/worlds/${enc(name)}/download`,
 };
 

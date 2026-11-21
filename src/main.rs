@@ -1,4 +1,5 @@
 mod app;
+mod backups;
 mod config;
 mod error;
 mod files;
@@ -26,9 +27,10 @@ async fn main() -> anyhow::Result<()> {
 
     let listener = tokio::net::TcpListener::bind(app.cfg.listen).await?;
     tracing::info!(
-        "omgminecraft sur http://{} — données dans {}",
+        "omgminecraft sur http://{} — données dans {}, sauvegardes dans {}",
         app.cfg.listen,
-        app.cfg.data_dir.display()
+        app.cfg.data_dir.display(),
+        app.cfg.backup_dir.display()
     );
     axum::serve(
         listener,

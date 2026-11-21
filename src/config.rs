@@ -17,6 +17,13 @@ pub struct Config {
     pub default_memory_mb: u32,
     /// Adresse que les joueurs tapent, affichée dans le panel.
     pub public_address: String,
+    /// Sauvegardes : à monter à part des données, pour qu'un effacement de
+    /// celles-ci ne les emporte pas.
+    pub backup_dir: PathBuf,
+    /// Heure locale de la sauvegarde automatique (0–23).
+    pub backup_hour: u32,
+    /// Durée de conservation des sauvegardes automatiques.
+    pub backup_retention_days: u64,
 }
 
 impl Config {
@@ -28,8 +35,18 @@ impl Config {
             .filter(|s| !s.is_empty())
             .map(|s| s.parse::<IpNet>().with_context(|| format!("OMG_ALLOWED_CIDRS: {s}")))
             .collect::<Result<Vec<_>>>()?;
+        let data_dir: PathBuf = var("OMG_DATA_DIR", "/srv/minecraft").into();
+        let backup_hour: u32 = var("OMG_BACKUP_HOUR", "4").parse().context("OMG_BACKUP_HOUR")?;
+        anyhow::ensure!(backup_hour < 24, "OMG_BACKUP_HOUR : entre 0 et 23");
         Ok(Self {
-            data_dir: var("OMG_DATA_DIR", "/srv/minecraft").into(),
+            backup_dir: std::env::var("OMG_BACKUP_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| data_dir.join("backups")),
+            backup_hour,
+            backup_retention_days: var("OMG_BACKUP_RETENTION_DAYS", "14")
+                .parse()
+                .context("OMG_BACKUP_RETENTION_DAYS")?,
+            data_dir,
             listen: var("OMG_LISTEN", "0.0.0.0:8080").parse().context("OMG_LISTEN")?,
             allowed,
             game_port: var("OMG_GAME_PORT", "25565").parse().context("OMG_GAME_PORT")?,
