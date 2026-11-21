@@ -14,6 +14,12 @@ Environment=OMG_BACKUP_DIR=/srv/backups
 # Environment=OMG_BACKUP_MAX_GB=3
 Environment=OMG_LISTEN=0.0.0.0:8080
 Environment=OMG_PUBLIC_ADDRESS=mc.secretofarasgrasa.com
+# Surface joueurs : pages de téléchargement des packs clients, seule chose
+# ouverte à team-minecraft en plus du jeu (policy NetBird, port 8081).
+Environment=OMG_SHARE_LISTEN=0.0.0.0:8081
+Environment=OMG_SHARE_URL=http://minecraft.netbird.selfhosted:8081
+# Secrets (OMG_CURSEFORGE_API_KEY=…), hors dépôt : root:root 600.
+EnvironmentFile=-/etc/omgminecraft.env
 # Environment=OMG_ALLOWED_CIDRS=100.64.0.0/10,127.0.0.0/8,::1/128
 # Environment=OMG_GAME_PORT=25565
 # Environment=OMG_DEFAULT_MEMORY_MB=6144

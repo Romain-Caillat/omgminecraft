@@ -207,7 +207,9 @@ fn validate_instance_json(content: &str) -> ApiResult<()> {
     if i.java_major != 0 && !(8..=99).contains(&i.java_major) {
         return Err(AppError::bad("instance.json : java_major invalide"));
     }
-    safe_name(&i.jar).map_err(|_| AppError::bad("instance.json : jar invalide"))?;
+    if !crate::instances::safe_rel_path(&i.jar) {
+        return Err(AppError::bad("instance.json : jar invalide"));
+    }
     if i.name.trim().is_empty() {
         return Err(AppError::bad("instance.json : name requis"));
     }

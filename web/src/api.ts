@@ -1,4 +1,49 @@
-export type Kind = 'vanilla' | 'fabric' | 'custom';
+export type Kind = 'vanilla' | 'paper' | 'fabric' | 'quilt' | 'forge' | 'neoforge' | 'custom';
+export const MODDED: Kind[] = ['fabric', 'quilt', 'forge', 'neoforge'];
+
+export interface MissingFile {
+  file_name: string;
+  url: string | null;
+  dir: string;
+  server: boolean;
+  client: boolean;
+}
+export interface ModpackInfo {
+  source: 'modrinth' | 'curseforge' | 'fichier';
+  project_id: string | null;
+  version_id: string | null;
+  title: string;
+  version_name: string;
+  icon_url: string | null;
+  missing: MissingFile[];
+}
+export type PackSource = 'modrinth' | 'curseforge';
+export interface PackHit {
+  id: string;
+  title: string;
+  description: string;
+  icon_url: string | null;
+  downloads: number;
+  game_versions: string[];
+  loaders: string[];
+}
+export interface PackVersion {
+  id: string;
+  name: string;
+  game_versions: string[];
+  loaders: string[];
+  date: string;
+}
+export interface ShareStatus {
+  client: boolean;
+  files: number;
+  mods: number;
+  size: number;
+  token: string | null;
+  url: string | null;
+  loader: string;
+  missing: MissingFile[];
+}
 export type RunState = 'stopped' | 'starting' | 'running' | 'stopping';
 
 export interface Instance {
@@ -15,6 +60,8 @@ export interface Instance {
   status: 'installing' | 'ready' | 'error';
   error: string | null;
   created_at: number;
+  modpack?: ModpackInfo | null;
+  share_token?: string | null;
 }
 
 export interface Status {
@@ -146,6 +193,28 @@ export const api = {
   deleteWorld: (id: string, name: string) => req<void>('DELETE', `${i(id)}/worlds/${enc(name)}`),
   uploadWorld: (id: string, form: FormData, p?: (n: number) => void) =>
     upload<{ name: string }>(`${i(id)}/worlds/upload`, form, p),
+  packConfig: () => req<{ curseforge: boolean }>('GET', '/modpacks/config'),
+  packSearch: (source: PackSource, q: string) =>
+    req<PackHit[]>('GET', `/modpacks/search?source=${source}&q=${enc(q)}`),
+  packVersions: (source: PackSource, project: string) =>
+    req<PackVersion[]>('GET', `/modpacks/versions?source=${source}&project=${enc(project)}`),
+  packImport: (body: {
+    source: PackSource;
+    project_id: string;
+    version_id: string;
+    name: string;
+    title: string;
+    icon_url: string | null;
+    memory_max_mb: number;
+    eula: boolean;
+  }) => req<Instance>('POST', '/modpacks/import', body),
+  packUpload: (form: FormData, p?: (n: number) => void) => upload<Instance>('/modpacks/upload', form, p),
+  uploadMissing: (id: string, form: FormData, p?: (n: number) => void) =>
+    upload<{ added: string[]; unknown: string[] }>(`${i(id)}/modpack/missing`, form, p),
+  share: (id: string) => req<ShareStatus>('GET', `${i(id)}/share`),
+  shareEnable: (id: string) => req<{ token: string; url: string }>('POST', `${i(id)}/share`),
+  shareDisable: (id: string) => req<void>('DELETE', `${i(id)}/share`),
+  shareFromServer: (id: string) => req<{ added: number }>('POST', `${i(id)}/share/from-server`),
   backups: () => req<BackupOverview>('GET', '/backups'),
   backupNow: (id: string) => req<Backup>('POST', `${i(id)}/backups`),
   restoreBackup: (id: string, file: string) => req<void>('POST', `/backups/${enc(id)}/${enc(file)}/restore`),
@@ -164,6 +233,22 @@ export function fmtSize(n: number): string {
     k++;
   }
   return `${v.toFixed(v < 10 ? 1 : 0)} ${u[k]}`;
+}
+
+export const kindLabel: Record<Kind, string> = {
+  vanilla: 'Vanilla',
+  paper: 'Paper',
+  fabric: 'Fabric',
+  quilt: 'Quilt',
+  forge: 'Forge',
+  neoforge: 'NeoForge',
+  custom: 'Perso',
+};
+
+export function fmtCount(n: number): string {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)} M`;
+  if (n >= 1e3) return `${Math.round(n / 1e3)} k`;
+  return String(n);
 }
 
 export const stateLabel: Record<RunState, string> = {

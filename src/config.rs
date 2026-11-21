@@ -26,6 +26,13 @@ pub struct Config {
     pub backup_retention_days: u64,
     /// Place maximale des sauvegardes d'une instance.
     pub backup_max_bytes: u64,
+    /// Clé de l'API CurseForge (console.curseforge.com) ; sans elle, seul
+    /// Modrinth et l'import de fichier sont disponibles.
+    pub curseforge_api_key: Option<String>,
+    /// Écoute de la surface joueurs (téléchargement des packs clients).
+    pub share_listen: SocketAddr,
+    /// Base des liens donnés aux joueurs, telle qu'ils l'atteignent.
+    pub share_url: String,
 }
 
 impl Config {
@@ -53,6 +60,9 @@ impl Config {
             backup_retention_days: var("OMG_BACKUP_RETENTION_DAYS", "14")
                 .parse()
                 .context("OMG_BACKUP_RETENTION_DAYS")?,
+            curseforge_api_key: std::env::var("OMG_CURSEFORGE_API_KEY").ok().filter(|k| !k.trim().is_empty()),
+            share_listen: var("OMG_SHARE_LISTEN", "0.0.0.0:8081").parse().context("OMG_SHARE_LISTEN")?,
+            share_url: var("OMG_SHARE_URL", "http://localhost:8081"),
             data_dir,
             listen: var("OMG_LISTEN", "0.0.0.0:8080").parse().context("OMG_LISTEN")?,
             allowed,

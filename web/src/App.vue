@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
-import { api, stateLabel, type Instance, type Status } from './api';
+import { api, kindLabel, MODDED, stateLabel, type Instance, type Status } from './api';
 import NewInstance from './components/NewInstance.vue';
 import ConsolePanel from './components/ConsolePanel.vue';
 import FilesPanel from './components/FilesPanel.vue';
@@ -8,6 +8,7 @@ import ModsPanel from './components/ModsPanel.vue';
 import WorldsPanel from './components/WorldsPanel.vue';
 import SettingsPanel from './components/SettingsPanel.vue';
 import BackupsPanel from './components/BackupsPanel.vue';
+import SharePanel from './components/SharePanel.vue';
 
 const status = ref<Status>({ state: 'stopped', instance: null, started_at: null, world: null, players: [], last_exit: null });
 const logs = ref<string[]>([]);
@@ -16,7 +17,7 @@ const address = ref('');
 const copied = ref(false);
 const instances = ref<Instance[]>([]);
 const selectedId = ref<string | null>(localStorage.getItem('omg.selected'));
-const tab = ref<'console' | 'files' | 'mods' | 'worlds' | 'backups' | 'settings'>('console');
+const tab = ref<'console' | 'files' | 'mods' | 'worlds' | 'share' | 'backups' | 'settings'>('console');
 /** Instances supprimées dont il reste des sauvegardes. */
 const orphans = ref<string[]>([]);
 const orphan = ref<string | null>(null);
@@ -135,7 +136,10 @@ onMounted(() => {
 });
 onUnmounted(() => clearInterval(tick));
 
-const kindLabel = { vanilla: 'Vanilla', fabric: 'Fabric', custom: 'Perso' };
+const modded = computed(() => !!selected.value && MODDED.includes(selected.value.kind));
+watch(modded, (m) => {
+  if (!m && (tab.value === 'mods' || tab.value === 'share')) tab.value = 'console';
+});
 </script>
 
 <template>
@@ -211,6 +215,7 @@ const kindLabel = { vanilla: 'Vanilla', fabric: 'Fabric', custom: 'Perso' };
         <div>
           <h1>{{ selected.name }}</h1>
           <p class="muted">
+            <template v-if="selected.modpack">{{ selected.modpack.title }} {{ selected.modpack.version_name }} · </template>
             {{ kindLabel[selected.kind] }} {{ selected.mc_version }}
             <template v-if="selected.loader_version"> · loader {{ selected.loader_version }}</template>
             · Java {{ selected.java_major || '?' }} · {{ selected.memory_max_mb }} Mo
@@ -231,8 +236,11 @@ const kindLabel = { vanilla: 'Vanilla', fabric: 'Fabric', custom: 'Perso' };
       <nav class="tabs">
         <button :class="{ on: tab === 'console' }" @click="tab = 'console'">Console</button>
         <button :class="{ on: tab === 'files' }" @click="tab = 'files'">Fichiers</button>
-        <button v-if="selected.kind !== 'vanilla'" :class="{ on: tab === 'mods' }" @click="tab = 'mods'">Mods</button>
+        <button v-if="modded" :class="{ on: tab === 'mods' }" @click="tab = 'mods'">Mods</button>
         <button :class="{ on: tab === 'worlds' }" @click="tab = 'worlds'">Mondes</button>
+        <button v-if="modded" :class="{ on: tab === 'share' }" @click="tab = 'share'">
+          Partage<span v-if="selected.modpack?.missing.length" class="badge">{{ selected.modpack.missing.length }}</span>
+        </button>
         <button :class="{ on: tab === 'backups' }" @click="tab = 'backups'">Sauvegardes</button>
         <button :class="{ on: tab === 'settings' }" @click="tab = 'settings'">Réglages</button>
       </nav>
@@ -254,6 +262,7 @@ const kindLabel = { vanilla: 'Vanilla', fabric: 'Fabric', custom: 'Perso' };
         :running="selected.id === runningId"
         :live-world="selected.id === runningId ? status.world : null"
       />
+      <SharePanel v-else-if="tab === 'share'" :key="`p-${selected.id}`" :instance="selected" @changed="refresh" />
       <BackupsPanel
         v-else-if="tab === 'backups'"
         :key="`b-${selected.id}`"

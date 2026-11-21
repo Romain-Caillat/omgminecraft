@@ -18,9 +18,34 @@ use crate::{
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
     Vanilla,
+    Paper,
     Fabric,
+    Quilt,
+    Forge,
+    Neoforge,
     /// Serveur importé à la main : `jar` est lancé tel quel.
     Custom,
+}
+
+impl Kind {
+    /// Charge des mods (et a donc un pack client à partager).
+    pub fn modded(self) -> bool {
+        matches!(self, Kind::Fabric | Kind::Quilt | Kind::Forge | Kind::Neoforge)
+    }
+    /// Jar ou cible de lancement posée à la création, avant installation.
+    pub fn default_jar(self) -> &'static str {
+        match self {
+            Kind::Fabric => "fabric-server-launch.jar",
+            Kind::Quilt => "quilt-server-launch.jar",
+            _ => "server.jar",
+        }
+    }
+    /// `libraries/` et `versions/` se régénèrent-ils seuls au démarrage ?
+    /// Oui pour vanilla, Paper et Fabric ; non quand c'est l'installeur qui
+    /// les a posés (Forge, NeoForge, Quilt).
+    pub fn regenerates_libraries(self) -> bool {
+        matches!(self, Kind::Vanilla | Kind::Paper | Kind::Fabric)
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -56,6 +81,12 @@ pub struct Instance {
     pub error: Option<String>,
     #[serde(default)]
     pub created_at: u64,
+    /// Modpack d'origine, s'il y en a un.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modpack: Option<crate::modpacks::ModpackInfo>,
+    /// Jeton du lien de téléchargement du pack client (`/p/<jeton>`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share_token: Option<String>,
 }
 
 pub fn now() -> u64 {
@@ -94,6 +125,16 @@ pub fn safe_name(name: &str) -> ApiResult<&str> {
     } else {
         Err(AppError::bad(format!("nom invalide : {name:?}")))
     }
+}
+
+/// Chemin relatif fourni par l'utilisateur (cible de lancement) : sans `..`,
+/// sans composant caché, sans chemin absolu.
+pub fn safe_rel_path(p: &str) -> bool {
+    !p.is_empty()
+        && p.len() <= 300
+        && !p.starts_with('/')
+        && !p.chars().any(char::is_control)
+        && p.split('/').all(|c| !c.is_empty() && !c.starts_with('.') && !c.contains('\\'))
 }
 
 pub fn slugify(name: &str) -> String {
@@ -200,5 +241,10 @@ mod tests {
         assert!(safe_name("a/b").is_err());
         assert!(safe_name(".hidden").is_err());
         assert!(safe_name("").is_err());
+        assert!(safe_rel_path("libraries/net/neoforged/neoforge/26.3.0.115/unix_args.txt"));
+        assert!(safe_rel_path("server.jar"));
+        assert!(!safe_rel_path("../x.jar"));
+        assert!(!safe_rel_path("/etc/x"));
+        assert!(!safe_rel_path("a//b"));
     }
 }

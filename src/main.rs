@@ -6,9 +6,11 @@ mod files;
 mod fs;
 mod install;
 mod instances;
+mod modpacks;
 mod properties;
 mod routes;
 mod server;
+mod share;
 mod web;
 
 use std::{net::SocketAddr, sync::Arc};
@@ -24,6 +26,20 @@ async fn main() -> anyhow::Result<()> {
     let cfg = config::Config::from_env()?;
     let app = app::App::init(cfg).await?;
     app.boot();
+
+    // Surface joueurs : uniquement les pages de téléchargement des packs.
+    let share_listener = tokio::net::TcpListener::bind(app.cfg.share_listen).await?;
+    tracing::info!("packs clients sur http://{} ({})", app.cfg.share_listen, app.cfg.share_url);
+    let share_app = app.clone();
+    tokio::spawn(async move {
+        let shutdown = share_app.shutdown.clone();
+        let r = axum::serve(share_listener, share::public_router(share_app))
+            .with_graceful_shutdown(async move { shutdown.cancelled().await })
+            .await;
+        if let Err(e) = r {
+            tracing::error!("surface joueurs : {e}");
+        }
+    });
 
     let listener = tokio::net::TcpListener::bind(app.cfg.listen).await?;
     tracing::info!(

@@ -1,4 +1,5 @@
-//! Téléchargements : jars serveur (Mojang, Fabric) et JRE (Adoptium).
+//! Téléchargements : jars serveur (Mojang, Paper, Fabric, Quilt, Forge,
+//! NeoForge) et JRE (Adoptium).
 
 use std::{
     path::{Component, Path, PathBuf},
@@ -18,6 +19,12 @@ use crate::{
 
 const MOJANG_MANIFEST: &str = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
 const FABRIC_META: &str = "https://meta.fabricmc.net/v2";
+const QUILT_META: &str = "https://meta.quiltmc.org/v3";
+const PAPER_API: &str = "https://fill.papermc.io/v3/projects/paper";
+const FORGE_MAVEN: &str = "https://maven.minecraftforge.net/net/minecraftforge/forge";
+const FORGE_FILES: &str = "https://files.minecraftforge.net/net/minecraftforge/forge";
+const NEOFORGE_MAVEN: &str = "https://maven.neoforged.net/releases/net/neoforged/neoforge";
+const NEOFORGE_VERSIONS: &str = "https://maven.neoforged.net/api/maven/versions/releases/net/neoforged/neoforge";
 
 #[derive(Serialize, Clone)]
 pub struct GameVersion {
@@ -70,8 +77,95 @@ struct FabricEntry {
     stable: bool,
 }
 
+async fn get_json<T: serde::de::DeserializeOwned>(http: &reqwest::Client, url: &str) -> Result<T> {
+    http.get(url)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await
+        .with_context(|| format!("réponse illisible de {url}"))
+}
+
 async fn manifest(http: &reqwest::Client) -> Result<Manifest> {
-    Ok(http.get(MOJANG_MANIFEST).send().await?.error_for_status()?.json().await?)
+    get_json(http, MOJANG_MANIFEST).await
+}
+
+fn release_or_snapshot(v: &str) -> String {
+    let pre = v.contains('-') || v.contains("pre") || v.contains("rc") || v.contains('w');
+    if pre { "snapshot" } else { "release" }.into()
+}
+
+/// Version de Minecraft visée par une version de NeoForge.
+/// - ancien schéma `21.1.77` → 1.21.1 (`20.2.x` → 1.20.2, `21.0.x` → 1.21) ;
+/// - nouveau schéma `26.3.0.115` → 26.3 (`26.1.2.129` → 26.1.2).
+pub fn neoforge_mc(v: &str) -> Option<String> {
+    let base = v.split('-').next()?;
+    let p: Vec<&str> = base.split('.').collect();
+    let major: u32 = p.first()?.parse().ok()?;
+    match (major, p.len()) {
+        (20..=25, 3) => Some(if p[1] == "0" { format!("1.{}", p[0]) } else { format!("1.{}.{}", p[0], p[1]) }),
+        (26.., 4) => Some(if p[2] == "0" { format!("{}.{}", p[0], p[1]) } else { format!("{}.{}.{}", p[0], p[1], p[2]) }),
+        _ => None,
+    }
+}
+
+async fn neoforge_versions(http: &reqwest::Client) -> Result<Vec<String>> {
+    #[derive(Deserialize)]
+    struct R {
+        versions: Vec<String>,
+    }
+    Ok(get_json::<R>(http, NEOFORGE_VERSIONS).await?.versions)
+}
+
+/// Dernière NeoForge pour `mc` : stable de préférence, bêta sinon.
+async fn neoforge_for(http: &reqwest::Client, mc: &str) -> Result<String> {
+    let all: Vec<String> = neoforge_versions(http)
+        .await?
+        .into_iter()
+        .filter(|v| neoforge_mc(v).as_deref() == Some(mc))
+        .collect();
+    all.iter()
+        .rev()
+        .find(|v| !v.contains('-'))
+        .or(all.last())
+        .cloned()
+        .ok_or_else(|| anyhow!("pas de NeoForge pour Minecraft {mc}"))
+}
+
+/// Forge recommandée pour `mc`, sinon la plus récente (`66.0.3`, sans le préfixe mc).
+async fn forge_for(http: &reqwest::Client, mc: &str) -> Result<String> {
+    #[derive(Deserialize)]
+    struct Promos {
+        promos: std::collections::HashMap<String, String>,
+    }
+    let p: Promos = get_json(http, &format!("{FORGE_FILES}/promotions_slim.json")).await?;
+    p.promos
+        .get(&format!("{mc}-recommended"))
+        .or_else(|| p.promos.get(&format!("{mc}-latest")))
+        .cloned()
+        .ok_or_else(|| anyhow!("pas de Forge pour Minecraft {mc}"))
+}
+
+async fn quilt_loader_latest(http: &reqwest::Client) -> Result<String> {
+    #[derive(Deserialize)]
+    struct L {
+        version: String,
+    }
+    let list: Vec<L> = get_json(http, &format!("{QUILT_META}/versions/loader")).await?;
+    list.into_iter()
+        .map(|l| l.version)
+        .find(|v| !v.contains('-'))
+        .ok_or_else(|| anyhow!("aucune version stable de Quilt"))
+}
+
+async fn quilt_installer(http: &reqwest::Client) -> Result<String> {
+    #[derive(Deserialize)]
+    struct I {
+        url: String,
+    }
+    let list: Vec<I> = get_json(http, &format!("{QUILT_META}/versions/installer")).await?;
+    list.into_iter().next().map(|i| i.url).ok_or_else(|| anyhow!("installeur Quilt introuvable"))
 }
 
 pub async fn versions(http: &reqwest::Client, kind: Kind) -> Result<Vec<GameVersion>> {
@@ -82,14 +176,13 @@ pub async fn versions(http: &reqwest::Client, kind: Kind) -> Result<Vec<GameVers
             .into_iter()
             .map(|v| GameVersion { id: v.id, kind: v.kind })
             .collect()),
-        Kind::Fabric => {
-            let list: Vec<FabricEntry> = http
-                .get(format!("{FABRIC_META}/versions/game"))
-                .send()
-                .await?
-                .error_for_status()?
-                .json()
-                .await?;
+        Kind::Fabric | Kind::Quilt => {
+            let url = if kind == Kind::Fabric {
+                format!("{FABRIC_META}/versions/game")
+            } else {
+                format!("{QUILT_META}/versions/game")
+            };
+            let list: Vec<FabricEntry> = get_json(http, &url).await?;
             Ok(list
                 .into_iter()
                 .map(|v| GameVersion {
@@ -97,6 +190,67 @@ pub async fn versions(http: &reqwest::Client, kind: Kind) -> Result<Vec<GameVers
                     kind: if v.stable { "release" } else { "snapshot" }.into(),
                 })
                 .collect())
+        }
+        Kind::Paper => {
+            #[derive(Deserialize)]
+            struct P {
+                versions: indexmap_like::Ordered,
+            }
+            let p: P = get_json(http, PAPER_API).await?;
+            Ok(p.versions
+                .0
+                .into_iter()
+                .flat_map(|(_, list)| list)
+                .map(|id| GameVersion { kind: release_or_snapshot(&id), id })
+                .collect())
+        }
+        Kind::Forge => {
+            let meta: indexmap_like::Ordered =
+                get_json(http, &format!("{FORGE_FILES}/maven-metadata.json")).await?;
+            Ok(meta
+                .0
+                .into_iter()
+                .rev()
+                .map(|(id, _)| GameVersion { kind: release_or_snapshot(&id.replace('_', "-")), id })
+                .collect())
+        }
+        Kind::Neoforge => {
+            let mut seen: Vec<String> = vec![];
+            for v in neoforge_versions(http).await?.iter().rev() {
+                if let Some(mc) = neoforge_mc(v) {
+                    if !seen.contains(&mc) {
+                        seen.push(mc);
+                    }
+                }
+            }
+            Ok(seen.into_iter().map(|id| GameVersion { kind: "release".into(), id }).collect())
+        }
+    }
+}
+
+/// Objet JSON dont l'ordre des clés compte (versions Paper, Forge).
+mod indexmap_like {
+    use serde::de::{Deserialize, Deserializer, MapAccess, Visitor};
+
+    pub struct Ordered(pub Vec<(String, Vec<String>)>);
+
+    impl<'de> Deserialize<'de> for Ordered {
+        fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+            struct V;
+            impl<'de> Visitor<'de> for V {
+                type Value = Ordered;
+                fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                    f.write_str("un objet de listes")
+                }
+                fn visit_map<A: MapAccess<'de>>(self, mut m: A) -> Result<Ordered, A::Error> {
+                    let mut out = vec![];
+                    while let Some((k, v)) = m.next_entry::<String, Vec<String>>()? {
+                        out.push((k, v));
+                    }
+                    Ok(Ordered(out))
+                }
+            }
+            d.deserialize_map(V)
         }
     }
 }
@@ -109,7 +263,7 @@ async fn vanilla_details(http: &reqwest::Client, mc: &str) -> Result<(Download, 
         .into_iter()
         .find(|v| v.id == mc)
         .ok_or_else(|| anyhow!("version inconnue chez Mojang : {mc}"))?;
-    let json: VersionJson = http.get(&v.url).send().await?.error_for_status()?.json().await?;
+    let json: VersionJson = get_json(http, &v.url).await?;
     let server = json
         .downloads
         .and_then(|d| d.server)
@@ -120,13 +274,7 @@ async fn vanilla_details(http: &reqwest::Client, mc: &str) -> Result<(Download, 
 }
 
 async fn fabric_latest(http: &reqwest::Client, what: &str) -> Result<String> {
-    let list: Vec<FabricEntry> = http
-        .get(format!("{FABRIC_META}/versions/{what}"))
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
+    let list: Vec<FabricEntry> = get_json(http, &format!("{FABRIC_META}/versions/{what}")).await?;
     list.into_iter()
         .find(|e| e.stable)
         .map(|e| e.version)
@@ -161,10 +309,20 @@ pub async fn download(http: &reqwest::Client, url: &str, dest: &Path, sha1: Opti
     Ok(())
 }
 
-/// Installation d'une instance fraîchement créée, en tâche de fond.
-pub async fn install_instance(app: Arc<App>, inst: Instance) {
+/// Installation d'une instance fraîchement créée, en tâche de fond. `pack` :
+/// modpack à poser par-dessus le loader.
+pub async fn install_instance(app: Arc<App>, inst: Instance, pack: Option<crate::modpacks::PackSource>) {
     let id = inst.id.clone();
-    let res = do_install(&app, &inst).await;
+    let res = async {
+        do_install(&app, &inst).await?;
+        if let Some(pack) = pack {
+            crate::modpacks::install_pack(&app, &id, pack).await?;
+        }
+        let inst = app.load_instance(&id).map_err(|e| anyhow!(e.1))?;
+        let java = ensure_java(&app, inst.java_major).await?;
+        init_settings(&app, &inst, &java).await
+    }
+    .await;
     let log = |m: String| app.server.log(format!("[omg] [{id}] {m}"));
     match &res {
         Ok(()) => log("installation terminée".into()),
@@ -182,36 +340,170 @@ pub async fn install_instance(app: Arc<App>, inst: Instance) {
     });
 }
 
+/// Lance un installeur Forge/NeoForge/Quilt dans `dir`.
+async fn run_installer(app: &App, java: &Path, dir: &Path, args: &[&str]) -> Result<()> {
+    let out = tokio::time::timeout(
+        std::time::Duration::from_secs(900),
+        tokio::process::Command::new(java)
+            .current_dir(dir)
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .map_err(|_| anyhow!("l'installeur n'a pas fini en 15 minutes"))??;
+    if !out.status.success() {
+        let tail: String = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .chain(String::from_utf8_lossy(&out.stderr).lines())
+            .filter(|l| !l.trim().is_empty())
+            .collect::<Vec<_>>()
+            .iter()
+            .rev()
+            .take(5)
+            .rev()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" | ");
+        bail!("l'installeur a échoué ({}) : {tail}", out.status);
+    }
+    let _ = app;
+    Ok(())
+}
+
+/// Cible de lancement laissée par l'installeur Forge/NeoForge : le fichier
+/// d'arguments des versions récentes, ou le jar des anciennes.
+fn forge_launch_target(dir: &Path, group: &str, version_dir: &str) -> Result<String> {
+    let args = format!("libraries/{group}/{version_dir}/unix_args.txt");
+    if dir.join(&args).is_file() {
+        return Ok(args);
+    }
+    for e in std::fs::read_dir(dir)?.flatten() {
+        let n = e.file_name().to_string_lossy().into_owned();
+        if (n.starts_with("forge-") || n.starts_with("neoforge-"))
+            && n.ends_with(".jar")
+            && !n.contains("installer")
+        {
+            return Ok(n);
+        }
+    }
+    bail!("l'installeur n'a laissé ni unix_args.txt ni jar serveur")
+}
+
 async fn do_install(app: &Arc<App>, inst: &Instance) -> Result<()> {
     let dir = app.instance_dir(&inst.id);
     let log = |m: String| app.server.log(format!("[omg] [{}] {m}", inst.id));
-    let (server, java) = vanilla_details(&app.http, &inst.mc_version).await?;
+    let mc = inst.mc_version.as_str();
+    let (server, java) = vanilla_details(&app.http, mc).await?;
+    app.update_instance(&inst.id, |i| i.java_major = java).map_err(|e| anyhow!(e.1))?;
+    let set = |f: Box<dyn FnOnce(&mut Instance) + Send>| app.update_instance(&inst.id, f).map_err(|e| anyhow!(e.1));
     match inst.kind {
         Kind::Vanilla => {
-            log(format!("téléchargement du serveur vanilla {}", inst.mc_version));
+            log(format!("téléchargement du serveur vanilla {mc}"));
             download(&app.http, &server.url, &dir.join(&inst.jar), Some(&server.sha1)).await?;
         }
         Kind::Fabric => {
-            let loader = fabric_latest(&app.http, "loader").await?;
+            let loader = match &inst.loader_version {
+                Some(v) => v.clone(),
+                None => fabric_latest(&app.http, "loader").await?,
+            };
             let installer = fabric_latest(&app.http, "installer").await?;
-            log(format!("téléchargement de Fabric {loader} pour {}", inst.mc_version));
-            let url = format!(
-                "{FABRIC_META}/versions/loader/{}/{loader}/{installer}/server/jar",
-                inst.mc_version
-            );
+            log(format!("téléchargement de Fabric {loader} pour {mc}"));
+            let url = format!("{FABRIC_META}/versions/loader/{mc}/{loader}/{installer}/server/jar");
             download(&app.http, &url, &dir.join(&inst.jar), None).await?;
             // Le lanceur Fabric télécharge lui-même le jar vanilla au premier
             // démarrage ; on le dépose d'avance pour que ce soit vérifié et immédiat.
             download(&app.http, &server.url, &dir.join("server.jar"), Some(&server.sha1)).await?;
-            app.update_instance(&inst.id, |i| i.loader_version = Some(loader))
-                .map_err(|e| anyhow!(e.1))?;
+            set(Box::new(move |i| i.loader_version = Some(loader)))?;
+        }
+        Kind::Paper => {
+            #[derive(Deserialize)]
+            struct Build {
+                id: u64,
+                downloads: std::collections::HashMap<String, PaperDl>,
+            }
+            #[derive(Deserialize)]
+            struct PaperDl {
+                url: String,
+            }
+            let b: Build = get_json(&app.http, &format!("{PAPER_API}/versions/{mc}/builds/latest")).await?;
+            let dl = b
+                .downloads
+                .get("server:default")
+                .ok_or_else(|| anyhow!("Paper ne publie pas de serveur pour {mc}"))?;
+            log(format!("téléchargement de Paper {mc} (build {})", b.id));
+            download(&app.http, &dl.url, &dir.join(&inst.jar), None).await?;
+            let build = b.id.to_string();
+            set(Box::new(move |i| i.loader_version = Some(build)))?;
+        }
+        Kind::Quilt => {
+            let loader = match &inst.loader_version {
+                Some(v) => v.clone(),
+                None => quilt_loader_latest(&app.http).await?,
+            };
+            let installer = dir.join("quilt-installer.jar");
+            download(&app.http, &quilt_installer(&app.http).await?, &installer, None).await?;
+            let java_bin = ensure_java(app, java.max(17)).await?;
+            log(format!("installation de Quilt {loader} pour {mc}"));
+            run_installer(
+                app,
+                &java_bin,
+                &dir,
+                &["-jar", "quilt-installer.jar", "install", "server", mc, &loader, "--download-server", "--install-dir=."],
+            )
+            .await?;
+            let _ = tokio::fs::remove_file(&installer).await;
+            set(Box::new(move |i| i.loader_version = Some(loader)))?;
+        }
+        Kind::Forge | Kind::Neoforge => {
+            let forge = inst.kind == Kind::Forge;
+            let loader = match &inst.loader_version {
+                Some(v) => v.clone(),
+                None if forge => forge_for(&app.http, mc).await?,
+                None => neoforge_for(&app.http, mc).await?,
+            };
+            let (url, group, vdir) = if forge {
+                let full = format!("{mc}-{loader}");
+                (
+                    format!("{FORGE_MAVEN}/{full}/forge-{full}-installer.jar"),
+                    "net/minecraftforge/forge",
+                    full,
+                )
+            } else {
+                (
+                    format!("{NEOFORGE_MAVEN}/{loader}/neoforge-{loader}-installer.jar"),
+                    "net/neoforged/neoforge",
+                    loader.clone(),
+                )
+            };
+            let name = if forge { "Forge" } else { "NeoForge" };
+            log(format!("installation de {name} {loader} pour {mc}"));
+            let installer = dir.join("installer.jar");
+            download(&app.http, &url, &installer, None).await?;
+            let java_bin = ensure_java(app, java).await?;
+            run_installer(app, &java_bin, &dir, &["-jar", "installer.jar", "--installServer"]).await?;
+            let _ = tokio::fs::remove_file(&installer).await;
+            let _ = tokio::fs::remove_file(dir.join("installer.jar.log")).await;
+            let target = forge_launch_target(&dir, group, &vdir)?;
+            set(Box::new(move |i| {
+                i.loader_version = Some(loader);
+                i.jar = target;
+            }))?;
         }
         Kind::Custom => bail!("une instance personnalisée ne s'installe pas"),
     }
-    app.update_instance(&inst.id, |i| i.java_major = java).map_err(|e| anyhow!(e.1))?;
-    let java = ensure_java(app, java).await?;
-    init_settings(app, inst, &java).await?;
     Ok(())
+}
+
+/// Arguments de lancement après les options de la JVM : `-jar x.jar`, ou
+/// `@fichier` pour Forge/NeoForge récents.
+pub fn launch_target(jar: &str) -> Vec<String> {
+    if jar.ends_with(".txt") {
+        vec![format!("@{jar}")]
+    } else {
+        vec!["-jar".into(), jar.into()]
+    }
 }
 
 /// Fait écrire au serveur son `server.properties` complet (toutes les clés de
@@ -226,7 +518,9 @@ pub async fn init_settings(app: &App, inst: &Instance, java: &Path) -> Result<()
     let _ = tokio::fs::remove_file(&eula).await;
     let mut cmd = tokio::process::Command::new(java);
     cmd.current_dir(&dir)
-        .args(["-Xmx1024M", "-jar", &inst.jar, "--initSettings", "nogui"])
+        .arg("-Xmx1024M")
+        .args(launch_target(&inst.jar))
+        .args(["--initSettings", "nogui"])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())

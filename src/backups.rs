@@ -42,8 +42,19 @@ use crate::{
 
 type AppState = State<Arc<App>>;
 
-/// Régénérés par le serveur au démarrage, ou sans valeur : inutile de les copier.
-const SKIP_TOP: [&str; 5] = ["libraries", "versions", ".fabric", "logs", "crash-reports"];
+/// Sans valeur ou régénérés : jamais copiés. `.share-cache` contient les zips
+/// du pack client, reconstruits à la demande.
+const SKIP_ALWAYS: [&str; 4] = [".fabric", "logs", "crash-reports", ".share-cache"];
+/// Régénérés au démarrage pour vanilla, Paper et Fabric seulement.
+const SKIP_REGENERATED: [&str; 2] = ["libraries", "versions"];
+
+fn skip_list(regenerates: bool) -> Vec<&'static str> {
+    let mut v = SKIP_ALWAYS.to_vec();
+    if regenerates {
+        v.extend(SKIP_REGENERATED);
+    }
+    v
+}
 const SUFFIX: &str = ".tar.gz";
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -134,8 +145,12 @@ fn check_id(id: &str) -> ApiResult<()> {
     }
 }
 
-/// Archive `src` (dossier d'instance) dans `out`.
-fn write_archive(src: &FsPath, out: &FsPath) -> Result<()> {
+/// Archive `src` (dossier d'instance) dans `out`, sans les dossiers de `skip`
+/// à la racine. Un fichier présent sous plusieurs noms (liens physiques entre
+/// `mods/` et le pack client `client/`) n'est stocké qu'une fois.
+fn write_archive(src: &FsPath, out: &FsPath, skip: &[&str]) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let mut seen: std::collections::HashMap<(u64, u64), PathBuf> = Default::default();
     let f = std::fs::File::create(out).with_context(|| format!("création de {}", out.display()))?;
     let gz = flate2::write::GzEncoder::new(io::BufWriter::new(f), flate2::Compression::fast());
     let mut tar = tar::Builder::new(gz);
@@ -149,7 +164,7 @@ fn write_archive(src: &FsPath, out: &FsPath) -> Result<()> {
             let rel = p.strip_prefix(src)?;
             let name = e.file_name();
             let name = name.to_string_lossy();
-            if dir == src && SKIP_TOP.contains(&name.as_ref()) {
+            if dir == src && skip.contains(&name.as_ref()) {
                 continue;
             }
             if name == "session.lock" || name.starts_with(".instance.json") {
@@ -159,6 +174,24 @@ fn write_archive(src: &FsPath, out: &FsPath) -> Result<()> {
             let res = if ft.is_dir() {
                 stack.push(p.clone());
                 tar.append_dir(rel, &p)
+            } else if ft.is_file() {
+                match e.metadata() {
+                    Ok(m) if m.nlink() > 1 => match seen.get(&(m.dev(), m.ino())) {
+                        Some(first) => {
+                            let mut h = tar::Header::new_gnu();
+                            h.set_entry_type(tar::EntryType::Link);
+                            h.set_size(0);
+                            h.set_mode(m.mode());
+                            h.set_mtime(m.mtime().max(0) as u64);
+                            tar.append_link(&mut h, rel, first)
+                        }
+                        None => {
+                            seen.insert((m.dev(), m.ino()), rel.to_path_buf());
+                            tar.append_path_with_name(&p, rel)
+                        }
+                    },
+                    _ => tar.append_path_with_name(&p, rel),
+                }
             } else {
                 tar.append_path_with_name(&p, rel)
             };
@@ -304,7 +337,8 @@ impl App {
             self.suspend_saves().await;
         }
         let (src, p) = (self.instance_dir(id), partial.clone());
-        let res = tokio::task::spawn_blocking(move || write_archive(&src, &p)).await;
+        let skip = skip_list(inst.kind.regenerates_libraries());
+        let res = tokio::task::spawn_blocking(move || write_archive(&src, &p, &skip)).await;
         if live {
             let _ = self.server.send_command("save-on").await;
         }
@@ -381,7 +415,7 @@ impl App {
             extract_archive(&a, &s)?;
             anyhow::ensure!(s.join("instance.json").is_file(), "archive sans instance.json");
             if c.exists() {
-                for keep in SKIP_TOP {
+                for keep in SKIP_ALWAYS.iter().chain(&SKIP_REGENERATED) {
                     let (from, to) = (c.join(keep), s.join(keep));
                     if from.exists() && !to.exists() {
                         std::fs::rename(&from, &to)?;
@@ -644,7 +678,10 @@ mod tests {
         std::fs::write(src.join("world/region/r.0.0.mca"), vec![7u8; 10_000]).unwrap();
         std::fs::write(src.join("libraries/x/a.jar"), "jar").unwrap();
         let out = base.join("b.tar.gz");
-        write_archive(&src, &out).unwrap();
+        std::fs::create_dir_all(src.join("client/mods")).unwrap();
+        std::fs::write(src.join("mods.jar"), vec![1u8; 5000]).unwrap();
+        std::fs::hard_link(src.join("mods.jar"), src.join("client/mods/mods.jar")).unwrap();
+        write_archive(&src, &out, &skip_list(true)).unwrap();
         let dest = base.join("dest");
         extract_archive(&out, &dest).unwrap();
         assert_eq!(std::fs::read(dest.join("world/level.dat")).unwrap(), b"lvl");
@@ -652,6 +689,8 @@ mod tests {
         assert!(dest.join("instance.json").is_file());
         assert!(!dest.join("libraries").exists());
         assert!(!dest.join("world/session.lock").exists());
+        assert_eq!(std::fs::read(dest.join("client/mods/mods.jar")).unwrap().len(), 5000);
+        assert_eq!(std::fs::read(dest.join("mods.jar")).unwrap().len(), 5000);
         std::fs::remove_dir_all(base).unwrap();
     }
 }

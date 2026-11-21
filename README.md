@@ -3,8 +3,9 @@
 Un mini « OMGServ » perso : un panel web pour gérer plusieurs serveurs Minecraft
 sur une seule machine et passer de l'un à l'autre en un clic.
 
-- **Instances** : vanilla ou Fabric, dans **n'importe quelle version** publiée par
-  Mojang (snapshots et anciennes versions compris). Le jar serveur est téléchargé
+- **Instances** : Vanilla, Paper, Fabric, Quilt, Forge ou NeoForge, dans
+  **n'importe quelle version** que le projet publie (snapshots et anciennes versions
+  compris). Le jar serveur est téléchargé
   et vérifié (SHA-1), et la **bonne version de Java** est installée automatiquement
   (Temurin, via Adoptium) : Java 8 pour une 1.12, 17 pour une 1.20.1, 21, 25…
 - **Pas de whitelist** : `white-list` et `enforce-whitelist` sont forcés à `false`
@@ -17,7 +18,15 @@ sur une seule machine et passer de l'un à l'autre en un clic.
   passe par là : `server.properties`, `config/` des mods, `ops.json`, `instance.json`
   (validé avant écriture)… Si le serveur a réécrit un fichier depuis son ouverture,
   l'enregistrement est refusé au lieu d'écraser ses changements.
-- **Mods** (Fabric) : glisser-déposer de `.jar`, activer/désactiver, supprimer.
+- **Mods** (Fabric, Quilt, Forge, NeoForge) : glisser-déposer de `.jar`,
+  activer/désactiver, supprimer.
+- **Modpacks** : recherche et import depuis **Modrinth** ou **CurseForge**, ou envoi
+  d'un `.mrpack` / `.zip`. Le loader et sa version exacte, les mods côté serveur et
+  la configuration du pack sont installés tout seuls.
+- **Partage du pack client** : un lien secret donne aux joueurs une page avec
+  l'instance **Prism Launcher** prête à importer (mods, configs, serveur déjà dans
+  la liste multijoueur) et un zip brut. Pas besoin de CurseForge côté joueur.
+- **Sauvegardes** automatiques et manuelles (voir plus bas).
 - **Mondes** : plusieurs mondes par instance, choix du monde chargé, import d'une
   map en `.zip`, nouveau monde avec graine, téléchargement d'une sauvegarde
   (`save-off` + `save-all flush` pendant l'archivage si le monde tourne).
@@ -67,6 +76,9 @@ Le groupe `admin` atteint déjà tous les ports de `srv-minecraft`. Adresse :
 | `OMG_BACKUP_HOUR` | `4` | Heure locale de la sauvegarde automatique |
 | `OMG_BACKUP_RETENTION_DAYS` | `14` | Conservation des sauvegardes automatiques |
 | `OMG_BACKUP_MAX_GB` | `3` | Place maximale des sauvegardes d'une instance |
+| `OMG_CURSEFORGE_API_KEY` | — | Clé API CurseForge ; sans elle, Modrinth et l'import de fichier seulement |
+| `OMG_SHARE_LISTEN` | `0.0.0.0:8081` | Surface joueurs : téléchargement des packs clients |
+| `OMG_SHARE_URL` | `http://localhost:8081` | Base des liens donnés aux joueurs |
 
 Arborescence :
 
@@ -87,6 +99,60 @@ serveurs, mondes et JRE y sont. Il est ignoré par git et par Docker, mais un
 `git clean -fdx`, un `rm -rf` du clone ou un re-clone **efface tous les mondes** :
 ne jamais faire ça ici. Les snapshots ZFS quotidiens de `media_disk/docker`
 (`/mnt/storage/.zfs/snapshot/`) sont la seule sauvegarde.
+
+## Loaders
+
+| Type | Installation | Lancement |
+|---|---|---|
+| Vanilla | jar Mojang (SHA-1 vérifié) | `-jar server.jar` |
+| Paper | dernier build de fill.papermc.io | `-jar server.jar` |
+| Fabric | lanceur serveur de meta.fabricmc.net | `-jar fabric-server-launch.jar` |
+| Quilt | `quilt-installer install server … --download-server` | `-jar quilt-server-launch.jar` |
+| Forge | installeur officiel `--installServer` (version recommandée, sinon la dernière) | `@libraries/…/unix_args.txt` |
+| NeoForge | installeur officiel `--installServer` (dernière stable, sinon bêta) | `@libraries/…/unix_args.txt` |
+
+`jar` dans `instance.json` est la cible de lancement : un `.txt` est passé en
+fichier d'arguments (`@…`), sinon en `-jar`. Pour Forge, NeoForge et Quilt,
+`libraries/` est posé par l'installeur et fait donc partie des sauvegardes.
+
+## Modpacks et partage
+
+**Import.** Onglet « Depuis un modpack » de la création d'instance. Le pack fixe la
+version de Minecraft, le loader et sa version. Chaque fichier va côté serveur
+(dossier de l'instance), côté client (`client/`), ou des deux (un seul fichier
+sur disque, lien physique) :
+
+- Modrinth : d'après le champ `env` de chaque fichier ; `overrides/` des deux
+  côtés (sauf resource packs, shaders, `options.txt`… côté serveur),
+  `server-overrides/` et `client-overrides/` d'un seul.
+- CurseForge : les mods marqués « Client » ou « Server » vont d'un seul côté, les
+  resource packs et shaders côté client. **Certains auteurs interdisent le
+  téléchargement par des outils tiers** : ces fichiers n'ont pas d'URL. Ils sont
+  listés dans l'onglet **Partage** avec le lien de leur page ; on les télécharge à
+  la main et on les envoie tels quels, ils sont reconnus par leur nom.
+
+Les packs déclarent souvent mal leurs mods purement client. Forge/NeoForge refuse
+alors de démarrer (« invalid dist DEDICATED_SERVER ») ; le panel lit le rapport de
+crash et nomme dans la console les jars à désactiver dans l'onglet Mods.
+
+**Partage.** Onglet **Partage** des instances moddées. Le pack client est le
+dossier `client/` (contenu d'un `.minecraft`) : rempli par l'import, ou créé depuis
+les mods du serveur (liens physiques + copie de `config/`), à compléter à la main
+par les mods purement client. Un lien `OMG_SHARE_URL/p/<jeton>` (48 caractères
+hex, révocable, régénérable) ouvre sur `OMG_SHARE_LISTEN` une page avec :
+
+- `prism.zip` : instance Prism Launcher (`instance.cfg`, `mmc-pack.json`,
+  `.minecraft/`), importable directement par URL ; Prism résout lui-même les
+  dépendances du loader (LWJGL, intermediary) ;
+- `mods.zip` : le contenu brut et un `LISEZMOI.txt`.
+
+Un `servers.dat` contenant `OMG_PUBLIC_ADDRESS` est ajouté si le pack n'en a pas.
+Les zips sont construits au premier téléchargement et gardés dans
+`.share-cache/` (exclu des sauvegardes) tant que le pack ne change pas.
+
+Ce port ne sert que ces trois routes : rien de l'API d'administration n'y est
+accessible. Sur PCT 107 il est ouvert à `team-minecraft` par une policy NetBird
+dédiée (8081/tcp).
 
 ## Sauvegardes
 

@@ -19,6 +19,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use crate::{
     app::App,
     backups,
+    modpacks, share,
     error::{ApiResult, AppError},
     files, fs, install,
     instances::{now, InstallStatus, Instance, Kind},
@@ -41,6 +42,17 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/instances/{id}/start", post(start))
         .route("/instances/{id}/backups", post(backups::create))
         .route("/backups", get(backups::list_all))
+        .route("/modpacks/config", get(modpacks::config))
+        .route("/modpacks/search", get(modpacks::search))
+        .route("/modpacks/versions", get(modpacks::versions))
+        .route("/modpacks/import", post(modpacks::import))
+        .route("/modpacks/upload", post(modpacks::upload).layer(DefaultBodyLimit::disable()))
+        .route(
+            "/instances/{id}/modpack/missing",
+            post(modpacks::upload_missing).layer(DefaultBodyLimit::disable()),
+        )
+        .route("/instances/{id}/share", get(share::status).post(share::enable).delete(share::disable))
+        .route("/instances/{id}/share/from-server", post(share::from_server))
         .route("/backups/{id}/{file}", delete(backups::remove))
         .route("/backups/{id}/{file}/restore", post(backups::restore))
         .route("/backups/{id}/{file}/download", get(backups::download))
@@ -182,11 +194,10 @@ async fn restart(State(app): AppState) -> ApiResult<StatusCode> {
 }
 
 async fn versions(State(app): AppState, Path(kind): Path<String>) -> ApiResult<Json<Value>> {
-    let kind = match kind.as_str() {
-        "vanilla" => Kind::Vanilla,
-        "fabric" => Kind::Fabric,
-        _ => return Err(AppError::bad("type inconnu")),
-    };
+    let kind: Kind = serde_json::from_value(json!(kind)).map_err(|_| AppError::bad("type inconnu"))?;
+    if kind == Kind::Custom {
+        return Err(AppError::bad("type inconnu"));
+    }
     let v = install::versions(&app.http, kind).await?;
     Ok(Json(json!(v)))
 }
@@ -220,43 +231,57 @@ async fn create(State(app): AppState, Json(req): Json<CreateReq>) -> ApiResult<J
     if mc.is_empty() || mc.len() > 40 || !mc.chars().all(|c| c.is_ascii_graphic()) {
         return Err(AppError::bad("version invalide"));
     }
-    let jar = match req.kind {
-        Kind::Vanilla => "server.jar",
-        Kind::Fabric => "fabric-server-launch.jar",
-        Kind::Custom => return Err(AppError::bad("une instance personnalisée s'importe à la main")),
-    };
+    if req.kind == Kind::Custom {
+        return Err(AppError::bad("une instance personnalisée s'importe à la main"));
+    }
     let max = req.memory_max_mb.unwrap_or(app.cfg.default_memory_mb);
     check_memory(max / 2, max)?;
-
-    let id = app.unique_id(name);
-    let dir = app.instance_dir(&id);
-    std::fs::create_dir_all(&dir)?;
-    std::fs::write(dir.join("eula.txt"), "eula=true\n")?;
-    let mut props = Properties::load(&dir.join("server.properties"))?;
-    app.enforce_props(&mut props);
-    props.set("motd", name);
-    props.save(&dir.join("server.properties"))?;
-    let inst = Instance {
-        id: id.clone(),
-        name: name.to_string(),
-        kind: req.kind,
-        mc_version: mc.to_string(),
-        loader_version: None,
-        jar: jar.into(),
-        java_major: 0,
-        memory_min_mb: (max / 2).max(512),
-        memory_max_mb: max,
-        jvm_args: vec![],
-        status: InstallStatus::Installing,
-        error: None,
-        created_at: now(),
-    };
-    app.save_instance(&inst)?;
-    tokio::spawn(install::install_instance(app.clone(), inst.clone()));
+    let inst = app.new_instance(name, req.kind, mc, None, max)?;
+    tokio::spawn(install::install_instance(app.clone(), inst.clone(), None));
     Ok(Json(inst))
 }
 
-fn check_memory(min: u32, max: u32) -> ApiResult<()> {
+impl App {
+    /// Crée le dossier et l'`instance.json` d'une instance à installer.
+    pub fn new_instance(
+        &self,
+        name: &str,
+        kind: Kind,
+        mc: &str,
+        loader_version: Option<String>,
+        max: u32,
+    ) -> ApiResult<Instance> {
+        let id = self.unique_id(name);
+        let dir = self.instance_dir(&id);
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(dir.join("eula.txt"), "eula=true\n")?;
+        let mut props = Properties::load(&dir.join("server.properties"))?;
+        self.enforce_props(&mut props);
+        props.set("motd", name);
+        props.save(&dir.join("server.properties"))?;
+        let inst = Instance {
+            id: id.clone(),
+            name: name.to_string(),
+            kind,
+            mc_version: mc.to_string(),
+            loader_version,
+            jar: kind.default_jar().into(),
+            java_major: 0,
+            memory_min_mb: (max / 2).max(512),
+            memory_max_mb: max,
+            jvm_args: vec![],
+            status: InstallStatus::Installing,
+            error: None,
+            created_at: now(),
+            modpack: None,
+            share_token: None,
+        };
+        self.save_instance(&inst)?;
+        Ok(inst)
+    }
+}
+
+pub fn check_memory(min: u32, max: u32) -> ApiResult<()> {
     if !(512..=65536).contains(&max) || min > max {
         return Err(AppError::bad("mémoire : entre 512 et 65536 Mo, minimum ≤ maximum"));
     }

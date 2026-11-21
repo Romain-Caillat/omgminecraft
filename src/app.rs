@@ -43,6 +43,8 @@ pub struct App {
     /// Une sauvegarde à la fois.
     pub(crate) backup_lock: tokio::sync::Mutex<()>,
     pub(crate) backup_state: Mutex<crate::backups::BackupState>,
+    /// Une construction de zip de pack client à la fois.
+    pub(crate) share_lock: tokio::sync::Mutex<()>,
     persisted: Mutex<Persisted>,
     tmp_counter: AtomicU64,
 }
@@ -77,6 +79,7 @@ impl App {
             op: Default::default(),
             backup_lock: Default::default(),
             backup_state: Mutex::new(backup_state),
+            share_lock: Default::default(),
             persisted: Mutex::new(persisted),
             tmp_counter: AtomicU64::new(0),
         }))
@@ -134,6 +137,7 @@ impl App {
         self.enforce_all();
         self.backfill_properties();
         self.spawn_backups();
+        self.spawn_crash_hints();
         let p = self.persisted();
         if let (true, Some(id)) = (p.running, p.active) {
             let app = self.clone();
@@ -245,8 +249,7 @@ impl App {
             // Log4Shell : inoffensif sur les versions récentes, utile sur 1.17–1.18.
             .arg("-Dlog4j2.formatMsgNoLookups=true")
             .args(&inst.jvm_args)
-            .arg("-jar")
-            .arg(&inst.jar)
+            .args(install::launch_target(&inst.jar))
             .arg("nogui");
         self.server.start(id.to_string(), world, cmd).await?;
         self.persist(|p| {
