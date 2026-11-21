@@ -46,6 +46,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/modpacks/search", get(modpacks::search))
         .route("/modpacks/versions", get(modpacks::versions))
         .route("/modpacks/import", post(modpacks::import))
+        .route("/modpacks/import-share", post(modpacks::import_share))
         .route("/modpacks/upload", post(modpacks::upload).layer(DefaultBodyLimit::disable()))
         .route(
             "/instances/{id}/modpack/missing",

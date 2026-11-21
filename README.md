@@ -131,6 +131,14 @@ sur disque, lien physique) :
   listés dans l'onglet **Partage** avec le lien de leur page ; on les télécharge à
   la main et on les envoie tels quels, ils sont reconnus par leur nom.
 
+**CurseForge.** Certaines clés API n'ont pas accès à la recherche (`/mods/search`
+→ 403) alors que tout le reste répond. Le panel se rabat alors sur les modpacks
+populaires (`/mods/featured`) pour une recherche vide, et accepte l'**ID du
+projet** (page du modpack, « Project ID ») ou un lien `…/projects/<id>`. Un
+**profil partagé depuis l'app CurseForge** (`curseforge.com/minecraft/share/<code>`)
+s'importe directement : `/v1/shared-profile/<code>` renvoie un zip de modpack
+ordinaire.
+
 Les packs déclarent souvent mal leurs mods purement client. Forge/NeoForge refuse
 alors de démarrer (« invalid dist DEDICATED_SERVER ») ; le panel lit le rapport de
 crash et nomme dans la console les jars à désactiver dans l'onglet Mods.

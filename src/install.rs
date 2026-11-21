@@ -320,7 +320,12 @@ pub async fn install_instance(app: Arc<App>, inst: Instance, pack: Option<crate:
         }
         let inst = app.load_instance(&id).map_err(|e| anyhow!(e.1))?;
         let java = ensure_java(&app, inst.java_major).await?;
-        init_settings(&app, &inst, &java).await
+        // Sans gravité : `server.properties` sera de toute façon écrit au
+        // premier démarrage (un gros modpack peut dépasser le délai).
+        if let Err(e) = init_settings(&app, &inst, &java).await {
+            app.server.log(format!("[omg] [{id}] server.properties généré au premier démarrage ({e:#})"));
+        }
+        Ok::<(), anyhow::Error>(())
     }
     .await;
     let log = |m: String| app.server.log(format!("[omg] [{id}] {m}"));
@@ -518,7 +523,8 @@ pub async fn init_settings(app: &App, inst: &Instance, java: &Path) -> Result<()
     let _ = tokio::fs::remove_file(&eula).await;
     let mut cmd = tokio::process::Command::new(java);
     cmd.current_dir(&dir)
-        .arg("-Xmx1024M")
+        // Un modpack charge tous ses mods avant d'écrire la configuration.
+        .arg(format!("-Xmx{}M", inst.memory_max_mb.max(1024)))
         .args(launch_target(&inst.jar))
         .args(["--initSettings", "nogui"])
         .stdin(std::process::Stdio::null())

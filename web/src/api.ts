@@ -208,6 +208,8 @@ export const api = {
     memory_max_mb: number;
     eula: boolean;
   }) => req<Instance>('POST', '/modpacks/import', body),
+  packImportShare: (body: { code: string; name: string; memory_max_mb: number; eula: boolean }) =>
+    req<Instance>('POST', '/modpacks/import-share', body),
   packUpload: (form: FormData, p?: (n: number) => void) => upload<Instance>('/modpacks/upload', form, p),
   uploadMissing: (id: string, form: FormData, p?: (n: number) => void) =>
     upload<{ added: string[]; unknown: string[] }>(`${i(id)}/modpack/missing`, form, p),

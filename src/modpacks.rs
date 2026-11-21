@@ -100,6 +100,7 @@ struct Header {
     mc: String,
     kind: Kind,
     loader_version: Option<String>,
+    image: Option<String>,
 }
 
 // --- lecture des archives ------------------------------------------------------
@@ -140,6 +141,8 @@ struct CfManifest {
     files: Vec<CfManifestFile>,
     #[serde(default = "default_overrides")]
     overrides: String,
+    #[serde(default)]
+    image: Option<String>,
 }
 
 fn default_overrides() -> String {
@@ -229,6 +232,7 @@ fn read_header(path: &FsPath) -> Result<Header> {
             mc,
             kind,
             loader_version,
+            image: None,
         });
     }
     if let Some(raw) = read_entry(path, "manifest.json")? {
@@ -253,6 +257,7 @@ fn read_header(path: &FsPath) -> Result<Header> {
             mc: m.minecraft.version,
             kind,
             loader_version,
+            image: m.image,
         });
     }
     bail!("ni modrinth.index.json ni manifest.json : ce n'est pas un modpack")
@@ -773,71 +778,145 @@ pub async fn search(State(app): AppState, Query(q): Query<SearchQuery>) -> ApiRe
                 })
                 .collect()
         }
-        "curseforge" => {
-            #[derive(Deserialize)]
-            #[serde(rename_all = "camelCase")]
-            struct M {
-                id: u64,
-                name: String,
-                #[serde(default)]
-                summary: String,
-                logo: Option<Logo>,
-                download_count: f64,
-                #[serde(default)]
-                latest_files_indexes: Vec<Idx>,
-            }
-            #[derive(Deserialize)]
-            #[serde(rename_all = "camelCase")]
-            struct Logo {
-                thumbnail_url: Option<String>,
-            }
-            #[derive(Deserialize)]
-            #[serde(rename_all = "camelCase")]
-            struct Idx {
-                game_version: String,
-                #[serde(default)]
-                mod_loader: Option<u32>,
-            }
-            let path = format!(
-                "/mods/search?gameId={CF_GAME}&classId={CF_MODPACKS}&sortField=2&sortOrder=desc&pageSize=24&searchFilter={}",
-                urlencode(&q.q)
-            );
-            let list: Vec<M> = cf_get(&app, &path).await?;
-            list.into_iter()
-                .map(|m| {
-                    let mut gv: Vec<String> = vec![];
-                    let mut loaders: Vec<String> = vec![];
-                    for i in &m.latest_files_indexes {
-                        if !gv.contains(&i.game_version) {
-                            gv.push(i.game_version.clone());
-                        }
-                        let l = match i.mod_loader {
-                            Some(1) => "forge",
-                            Some(4) => "fabric",
-                            Some(5) => "quilt",
-                            Some(6) => "neoforge",
-                            _ => continue,
-                        };
-                        if !loaders.iter().any(|x| x == l) {
-                            loaders.push(l.into());
-                        }
-                    }
-                    gv.truncate(4);
-                    PackHit {
-                        id: m.id.to_string(),
-                        title: m.name,
-                        description: m.summary,
-                        icon_url: m.logo.and_then(|l| l.thumbnail_url),
-                        downloads: m.download_count as u64,
-                        game_versions: gv,
-                        loaders,
-                    }
-                })
-                .collect()
-        }
+        "curseforge" => cf_search(&app, q.q.trim()).await?,
         _ => return Err(AppError::bad("source inconnue")),
     };
     Ok(Json(hits))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CfSearchMod {
+    id: u64,
+    name: String,
+    #[serde(default)]
+    summary: String,
+    #[serde(default)]
+    class_id: Option<u32>,
+    logo: Option<CfLogo>,
+    #[serde(default)]
+    download_count: f64,
+    #[serde(default)]
+    latest_files_indexes: Vec<CfIdx>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CfLogo {
+    thumbnail_url: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CfIdx {
+    game_version: String,
+    #[serde(default)]
+    mod_loader: Option<u32>,
+}
+
+fn cf_hit(m: CfSearchMod) -> PackHit {
+    let mut gv: Vec<String> = vec![];
+    let mut loaders: Vec<String> = vec![];
+    for i in &m.latest_files_indexes {
+        if !gv.contains(&i.game_version) {
+            gv.push(i.game_version.clone());
+        }
+        let l = match i.mod_loader {
+            Some(1) => "forge",
+            Some(4) => "fabric",
+            Some(5) => "quilt",
+            Some(6) => "neoforge",
+            _ => continue,
+        };
+        if !loaders.iter().any(|x| x == l) {
+            loaders.push(l.into());
+        }
+    }
+    gv.truncate(4);
+    PackHit {
+        id: m.id.to_string(),
+        title: m.name,
+        description: m.summary,
+        icon_url: m.logo.and_then(|l| l.thumbnail_url),
+        downloads: m.download_count as u64,
+        game_versions: gv,
+        loaders,
+    }
+}
+
+/// Code de partage de profil de l'app CurseForge, tapé tel quel ou dans un
+/// lien `curseforge.com/minecraft/share/<code>`.
+pub fn cf_share_code(q: &str) -> Option<String> {
+    let q = q.trim().trim_end_matches('/');
+    let code = match q.rsplit_once("/share/") {
+        Some((_, c)) => c.split(['/', '?', '#']).next()?,
+        None if q.contains('_') && !q.contains(' ') => q,
+        None => return None,
+    };
+    (!code.is_empty() && code.len() <= 32 && code.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-'))
+        .then(|| code.to_string())
+}
+
+/// ID de projet CurseForge tapé tel quel, ou dans un lien `…/projects/<id>`.
+fn cf_project_id(q: &str) -> Option<u64> {
+    let q = q.trim().trim_end_matches('/');
+    if let Ok(id) = q.parse() {
+        return Some(id);
+    }
+    q.rsplit_once("/projects/").and_then(|(_, id)| id.split(['/', '?', '#']).next()?.parse().ok())
+}
+
+/// Recherche CurseForge. Certaines clés n'ont pas accès à `/mods/search`
+/// (403) : on se rabat alors sur l'ID de projet, et sur les modpacks
+/// populaires (`/mods/featured`) pour une recherche vide.
+async fn cf_search(app: &App, q: &str) -> Result<Vec<PackHit>> {
+    if let Some(id) = cf_project_id(q) {
+        let m: CfSearchMod = cf_get(app, &format!("/mods/{id}")).await?;
+        if m.class_id != Some(CF_MODPACKS) {
+            bail!("le projet CurseForge {id} n'est pas un modpack");
+        }
+        return Ok(vec![cf_hit(m)]);
+    }
+    let path = format!(
+        "/mods/search?gameId={CF_GAME}&classId={CF_MODPACKS}&sortField=2&sortOrder=desc&pageSize=24&searchFilter={}",
+        urlencode(q)
+    );
+    match cf_get::<Vec<CfSearchMod>>(app, &path).await {
+        Ok(list) => return Ok(list.into_iter().map(cf_hit).collect()),
+        Err(e) if !e.to_string().contains("403") => return Err(e),
+        Err(_) => {}
+    }
+    if !q.is_empty() {
+        bail!(
+            "la clé CurseForge n'a pas accès à la recherche — collez l'ID du projet \
+             (page du modpack, « Project ID »), ou laissez vide pour voir les modpacks populaires"
+        );
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Featured {
+        #[serde(default)]
+        featured: Vec<CfSearchMod>,
+        #[serde(default)]
+        popular: Vec<CfSearchMod>,
+        #[serde(default)]
+        recently_updated: Vec<CfSearchMod>,
+    }
+    let f: Featured =
+        cf_post(app, "/mods/featured", json!({ "gameId": CF_GAME, "excludedModIds": [] })).await?;
+    let mut seen = vec![];
+    Ok(f.featured
+        .into_iter()
+        .chain(f.popular)
+        .chain(f.recently_updated)
+        .filter(|m| m.class_id == Some(CF_MODPACKS))
+        .filter(|m| {
+            let new = !seen.contains(&m.id);
+            seen.push(m.id);
+            new
+        })
+        .map(cf_hit)
+        .collect())
 }
 
 fn urlencode(s: &str) -> String {
@@ -935,6 +1014,49 @@ async fn install_json<T: serde::de::DeserializeOwned>(app: &App, url: &str) -> R
 }
 
 #[derive(Deserialize)]
+pub struct ShareImportReq {
+    code: String,
+    #[serde(default)]
+    name: String,
+    memory_max_mb: Option<u32>,
+    eula: bool,
+}
+
+/// Import d'un profil partagé depuis l'app CurseForge (lien `…/share/<code>`) :
+/// l'API renvoie un zip de modpack ordinaire (`manifest.json` + `overrides/`).
+pub async fn import_share(State(app): AppState, Json(req): Json<ShareImportReq>) -> ApiResult<Json<Instance>> {
+    if !req.eula {
+        return Err(AppError::bad("il faut accepter l'EULA de Minecraft"));
+    }
+    let code = cf_share_code(&req.code).ok_or_else(|| AppError::bad("code de partage CurseForge invalide"))?;
+    let max = req.memory_max_mb.unwrap_or(app.cfg.default_memory_mb);
+    check_memory(max / 2, max)?;
+    let resp = app
+        .http
+        .get(format!("{CURSEFORGE}/shared-profile/{code}"))
+        .header("x-api-key", cf_key(&app)?)
+        .send()
+        .await?;
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return Err(AppError::not_found("profil partagé introuvable (code expiré ?)"));
+    }
+    let bytes = resp.error_for_status()?.bytes().await?;
+    let path = app.tmp_path("pack");
+    tokio::fs::write(&path, &bytes).await?;
+    let info = ModpackInfo {
+        source: "curseforge".into(),
+        project_id: None,
+        version_id: None,
+        title: String::new(),
+        version_name: String::new(),
+        icon_url: None,
+        missing: vec![],
+    };
+    app.server.log(format!("[omg] profil CurseForge partagé {code} récupéré ({} Ko)", bytes.len() / 1024));
+    Ok(Json(create_from_pack(&app, path, &req.name, max, info).await?))
+}
+
+#[derive(Deserialize)]
 pub struct ImportReq {
     source: String,
     project_id: String,
@@ -968,6 +1090,9 @@ async fn create_from_pack(
     };
     if info.title.is_empty() {
         info.title = header.name.clone();
+    }
+    if info.icon_url.is_none() {
+        info.icon_url = header.image.clone().filter(|u| u.starts_with("https://"));
     }
     if info.version_name.is_empty() {
         info.version_name = header.version.clone();
@@ -1159,6 +1284,23 @@ mod tests {
         let r = "x\n-- Mod loading issue for: statuseffectbars --\nDetails:\n\tCaused by 0: java.lang.BootstrapMethodError: java.lang.RuntimeException: Attempted to load class net/minecraft/client/gui/screens/Screen for invalid dist DEDICATED_SERVER\n\t\tat TRANSFORMER/statuseffectbars@1.0.2/com.x.StatusEffectBars.<init>(StatusEffectBars.java:20) ~[statuseffectbars-1.21.1-NeoForge-1.0.2.jar%23314!/:?]\n-- Mod loading issue for: other --\nDetails:\n\tsomething else [other-1.0.jar%231!/:?]\n";
         assert_eq!(client_only_culprits(r), vec!["statuseffectbars-1.21.1-NeoForge-1.0.2.jar"]);
         assert!(client_only_culprits("rien").is_empty());
+    }
+
+    #[test]
+    fn share_codes() {
+        assert_eq!(cf_share_code("https://www.curseforge.com/minecraft/share/afvis_tM").as_deref(), Some("afvis_tM"));
+        assert_eq!(cf_share_code("afvis_tM").as_deref(), Some("afvis_tM"));
+        assert_eq!(cf_share_code("925200"), None);
+        assert_eq!(cf_share_code("all the mods"), None);
+        assert_eq!(cf_share_code("https://x/share/../etc"), None);
+    }
+
+    #[test]
+    fn cf_ids() {
+        assert_eq!(cf_project_id("925200"), Some(925200));
+        assert_eq!(cf_project_id(" https://www.curseforge.com/projects/925200/ "), Some(925200));
+        assert_eq!(cf_project_id("https://www.curseforge.com/minecraft/modpacks/all-the-mods-10"), None);
+        assert_eq!(cf_project_id("all the mods"), None);
     }
 
     #[test]

@@ -76,7 +76,7 @@ onMounted(async () => {
 });
 
 async function search() {
-  if (source.value === 'fichier') return;
+  if (source.value === 'fichier' || shareCode.value) return;
   searching.value = true;
   error.value = '';
   pack.value = null;
@@ -111,6 +111,14 @@ async function choose(h: PackHit) {
   }
 }
 
+/** Lien ou code de partage de profil de l'app CurseForge. */
+const shareCode = computed(() => {
+  if (source.value !== 'curseforge') return null;
+  const q = query.value.trim().replace(/\/+$/, '');
+  const m = q.match(/\/share\/([A-Za-z0-9_-]+)/) ?? (q.includes('_') && !q.includes(' ') ? [q, q] : null);
+  return m ? m[1] : null;
+});
+
 const placeholder = computed(() => {
   if (mode.value === 'server') return `${kindLabel[kind.value]} ${version.value}`;
   if (source.value === 'fichier') return file.value?.name.replace(/\.(zip|mrpack)$/, '') ?? 'Nom du modpack';
@@ -121,6 +129,7 @@ const canSubmit = computed(() => {
   if (saving.value || !eula.value) return false;
   if (mode.value === 'server') return !!version.value;
   if (source.value === 'fichier') return !!file.value;
+  if (shareCode.value) return true;
   return !!pack.value && !!packVersion.value;
 });
 
@@ -138,6 +147,8 @@ async function submit() {
         memory_max_mb: memory,
         eula: eula.value,
       });
+    } else if (shareCode.value) {
+      inst = await api.packImportShare({ code: shareCode.value, name: name.value.trim(), memory_max_mb: memory, eula: eula.value });
     } else if (source.value === 'fichier') {
       const form = new FormData();
       form.append('name', name.value.trim());
@@ -220,10 +231,19 @@ function fmtDate(d: string) {
 
         <template v-else>
           <div class="cmdline">
-            <input v-model="query" placeholder="Rechercher un modpack…" @keydown.enter.prevent="search" />
+            <input
+              v-model="query"
+              :placeholder="source === 'curseforge' ? 'Lien de partage, ID du projet, ou vide pour les populaires' : 'Rechercher un modpack…'"
+              @keydown.enter.prevent="search"
+            />
             <button type="button" :disabled="searching" @click="search">{{ searching ? '…' : 'Chercher' }}</button>
           </div>
-          <ul v-if="!pack" class="packs">
+          <p v-if="source === 'curseforge' && !shareCode" class="muted small">
+            Un profil partagé depuis l'app CurseForge (lien <code>curseforge.com/minecraft/share/…</code>) s'importe
+            directement. Pour un modpack public, l'ID est sur sa page, encadré « About Project » → <em>Project ID</em>.
+          </p>
+          <p v-if="shareCode" class="banner info">Profil CurseForge partagé <code>{{ shareCode }}</code> : cliquez sur Importer.</p>
+          <ul v-if="!pack && !shareCode" class="packs">
             <li v-for="h in hits" :key="h.id" @click="choose(h)">
               <img v-if="h.icon_url" :src="h.icon_url" alt="" loading="lazy" />
               <span v-else class="noicon"></span>
@@ -239,7 +259,7 @@ function fmtDate(d: string) {
             </li>
             <li v-if="!hits.length && !searching" class="muted empty">Aucun résultat.</li>
           </ul>
-          <div v-else class="picked">
+          <div v-else-if="pack" class="picked">
             <img v-if="pack.icon_url" :src="pack.icon_url" alt="" />
             <div>
               <strong>{{ pack.title }}</strong>
