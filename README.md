@@ -77,6 +77,13 @@ Arborescence :
     ├── server.properties, eula.txt, mods/, world/, …
 ```
 
+Sur ce serveur, `/srv/minecraft` est **`data/` à la racine de ce dépôt**, monté
+dans PCT 107 par `mp0: /mnt/storage/omgminecraft/data,mp=/srv/minecraft`. Tous les
+serveurs, mondes et JRE y sont. Il est ignoré par git et par Docker, mais un
+`git clean -fdx`, un `rm -rf` du clone ou un re-clone **efface tous les mondes** :
+ne jamais faire ça ici. Les snapshots ZFS quotidiens de `media_disk/docker`
+(`/mnt/storage/.zfs/snapshot/`) sont la seule sauvegarde.
+
 Un Java système `/usr/lib/jvm/temurin-<major>-{jre,jdk}-<arch>` est utilisé en
 priorité ; sinon le JRE est téléchargé dans `java/<major>/`.
 
@@ -91,7 +98,7 @@ docker run --rm omgminecraft-build > omgminecraft && chmod +x omgminecraft
 
 Le build lance aussi `vue-tsc` et les tests Rust. Le binaire est statique (musl).
 
-En développement : `OMG_DATA_DIR=./data OMG_LISTEN=127.0.0.1:8080 cargo run` d'un
+En développement : `OMG_DATA_DIR=./dev-data OMG_LISTEN=127.0.0.1:8080 cargo run` d'un
 côté (après un premier `npm run build` dans `web/`, le binaire embarque `web/dist`),
 `npm run dev` dans `web/` de l'autre.
 
